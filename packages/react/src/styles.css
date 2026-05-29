@@ -1087,8 +1087,9 @@
 .ht-model-detail-empty svg {
   width: 48px;
   height: 48px;
-  opacity: 0.55;
+  opacity: 0.7;
   color: var(--ht-cyan);
+  filter: drop-shadow(0 0 16px color-mix(in srgb, var(--ht-cyan) 30%, transparent));
 }
 
 .ht-catalog-item-compact {
@@ -2118,4 +2119,75 @@
   bottom: 0;
   width: 3px;
   background: var(--ht-cyan);
+}
+
+/* --- Polish: themed scrollbars, selection, focus, entrance --- */
+
+/* Scrollbars (the element itself + any scrollable descendant). */
+.ht-theme {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ht-elevated-border-strong) transparent;
+}
+
+.ht-theme::-webkit-scrollbar,
+.ht-theme ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ht-theme::-webkit-scrollbar-track,
+.ht-theme ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ht-theme::-webkit-scrollbar-thumb,
+.ht-theme ::-webkit-scrollbar-thumb {
+  background: var(--ht-elevated-border-strong);
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background-clip: padding-box;
+}
+
+.ht-theme::-webkit-scrollbar-thumb:hover,
+.ht-theme ::-webkit-scrollbar-thumb:hover {
+  background: var(--ht-muted);
+  background-clip: padding-box;
+}
+
+/* Text selection picks up the brand accent. */
+.ht-theme ::selection {
+  background: color-mix(in srgb, var(--ht-cyan) 28%, transparent);
+  color: var(--ht-text);
+}
+
+/* Consistent keyboard-focus ring across the whole surface. */
+.ht-theme :focus-visible {
+  outline: 2px solid var(--ht-cyan);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* One orchestrated moment: catalog results rise in, staggered.
+   Gated on motion preference so default/reduced state is fully visible. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ht-rise {
+    from { opacity: 0; transform: translateY(9px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .ht-catalog-list .ht-catalog-item,
+  .ht-model-list-pane .ht-catalog-item-compact {
+    animation: ht-rise 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .ht-catalog-list .ht-catalog-item:nth-child(2),
+  .ht-model-list-pane .ht-catalog-item-compact:nth-child(2) { animation-delay: 0.04s; }
+  .ht-catalog-list .ht-catalog-item:nth-child(3),
+  .ht-model-list-pane .ht-catalog-item-compact:nth-child(3) { animation-delay: 0.08s; }
+  .ht-catalog-list .ht-catalog-item:nth-child(4),
+  .ht-model-list-pane .ht-catalog-item-compact:nth-child(4) { animation-delay: 0.12s; }
+  .ht-catalog-list .ht-catalog-item:nth-child(5),
+  .ht-model-list-pane .ht-catalog-item-compact:nth-child(5) { animation-delay: 0.16s; }
+  .ht-catalog-list .ht-catalog-item:nth-child(n + 6),
+  .ht-model-list-pane .ht-catalog-item-compact:nth-child(n + 6) { animation-delay: 0.2s; }
 }
