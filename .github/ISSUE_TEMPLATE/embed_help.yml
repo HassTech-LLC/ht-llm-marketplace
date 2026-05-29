@@ -1,0 +1,34 @@
+name: Embed/customization help
+description: Get help embedding or customizing the marketplace.
+title: "[Embed]: "
+labels: ["question", "customization"]
+body:
+  - type: dropdown
+    id: embed_type
+    attributes:
+      label: Embed type
+      options:
+        - React
+        - Web Component
+        - CLI-generated config
+        - Daemon API
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config or markup
+      description: Paste the smallest config or HTML that reproduces the issue.
+      render: tsx
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

@@ -1,0 +1,39 @@
+{
+  "name": "@ht-llm-marketplace/react",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "description": "React marketplace UI for embedding local LLM discovery and runtime controls.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "directory": "packages/react"
+  },
+  "keywords": ["react", "llm", "local-ai", "gguf", "ollama", "huggingface"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node ../../scripts/copy-file.mjs src/styles.css dist/styles.css",
+    "check": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ht-llm-marketplace/sdk": "0.1.0"
+  },
+  "peerDependencies": {
+    "react": ">=18 <20"
+  },
+  "devDependencies": {
+    "react": "^19.2.6"
+  }
+}

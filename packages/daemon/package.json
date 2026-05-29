@@ -1,0 +1,47 @@
+{
+  "name": "@ht-llm-marketplace/daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "description": "Local HTTP daemon, runtime scanner, and installer service for HT Local LLM Marketplace.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "directory": "packages/daemon"
+  },
+  "keywords": [
+    "daemon",
+    "llm",
+    "local-ai",
+    "gguf",
+    "ollama",
+    "huggingface"
+  ],
+  "bin": {
+    "htlm-daemon": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "check": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ht-llm-marketplace/sdk": "0.1.0",
+    "node-llama-cpp": "^3.18.1"
+  }
+}

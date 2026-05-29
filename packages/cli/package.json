@@ -1,0 +1,29 @@
+{
+  "name": "@ht-llm-marketplace/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "description": "CLI for initializing and inspecting HT Local LLM Marketplace embeds.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "directory": "packages/cli"
+  },
+  "keywords": ["cli", "llm", "local-ai", "gguf", "ollama", "huggingface"],
+  "main": "./dist/index.js",
+  "bin": {
+    "htlm": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node ../../scripts/copy-file.mjs src/index.js dist/index.js",
+    "check": "node --check src/index.js"
+  },
+  "dependencies": {
+    "@ht-llm-marketplace/daemon": "0.1.0"
+  }
+}

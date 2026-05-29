@@ -1,0 +1,36 @@
+{
+  "name": "@ht-llm-marketplace/web-component",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "description": "Framework-neutral Web Component wrapper for HT Local LLM Marketplace.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "directory": "packages/web-component"
+  },
+  "keywords": ["web-component", "llm", "local-ai", "gguf", "ollama", "huggingface"],
+  "main": "./dist/ht-model-marketplace.js",
+  "exports": {
+    ".": "./dist/ht-model-marketplace.js"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ht-llm-marketplace/react": "0.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.12",
+    "typescript": "^5.9.3"
+  }
+}

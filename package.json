@@ -1,0 +1,62 @@
+{
+  "name": "ht-llm-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first LLM marketplace, runtime doctor, and embeddable model manager.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git"
+  },
+  "keywords": [
+    "llm",
+    "local-ai",
+    "gguf",
+    "ollama",
+    "huggingface",
+    "web-component"
+  ],
+  "workspaces": [
+    "packages/sdk",
+    "packages/react",
+    "packages/web-component",
+    "packages/daemon",
+    "packages/cli",
+    "apps/studio"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n daemon,studio -c green,cyan \"npm run dev -w @ht-llm-marketplace/daemon\" \"npm run dev -w @ht-llm-marketplace/studio\"",
+    "studio": "npm run dev",
+    "start:daemon": "npm run start -w @ht-llm-marketplace/daemon",
+    "dev:daemon": "npm run dev -w @ht-llm-marketplace/daemon",
+    "dev:studio": "npm run dev -w @ht-llm-marketplace/studio",
+    "build": "npm run check && npm run build --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present",
+    "pack:dry-run": "npm pack --dry-run -w @ht-llm-marketplace/sdk && npm pack --dry-run -w @ht-llm-marketplace/react && npm pack --dry-run -w @ht-llm-marketplace/web-component && npm pack --dry-run -w @ht-llm-marketplace/daemon && npm pack --dry-run -w @ht-llm-marketplace/cli",
+    "smoke:packages": "node scripts/package-smoke.mjs",
+    "release:check": "npm run check && npm test && npm run build && npm run pack:dry-run && npm run smoke:packages",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "npm run check"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "playwright": "^1.60.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.12",
+    "vitest": "^4.0.14"
+  },
+  "dependencies": {
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  }
+}

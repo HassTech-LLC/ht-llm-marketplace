@@ -1,0 +1,29 @@
+{
+  "name": "@ht-llm-marketplace/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "description": "Typed client and shared types for HT Local LLM Marketplace.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "directory": "packages/sdk"
+  },
+  "keywords": ["llm", "local-ai", "gguf", "ollama", "huggingface"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json"
+  }
+}

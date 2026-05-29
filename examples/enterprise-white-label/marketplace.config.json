@@ -1,0 +1,51 @@
+{
+  "apiUrl": "http://127.0.0.1:3001",
+  "theme": "system",
+  "branding": {
+    "name": "Enterprise Model Hub",
+    "tagline": "Approved local inference catalog",
+    "mark": "EM"
+  },
+  "display": {
+    "showLogos": true,
+    "showDescriptions": true,
+    "showBadges": true,
+    "showSpecs": false
+  },
+  "features": {
+    "discover": true,
+    "downloads": true,
+    "library": true,
+    "runtimes": true,
+    "doctor": false,
+    "settings": false,
+    "themeToggle": true,
+    "refresh": true,
+    "doctorAction": false,
+    "viewSettings": true
+  },
+  "labels": {
+    "nav": {
+      "discover": "Approved Models",
+      "downloads": "Install Queue",
+      "library": "Local Inventory",
+      "runtimes": "Runtimes"
+    },
+    "buttons": {
+      "search": "Search catalog",
+      "viewSettings": "Display",
+      "downloadQuantized": "Install GGUF"
+    },
+    "empty": {
+      "noDownloads": "No installs are running."
+    }
+  },
+  "tokens": {
+    "--ht-cyan": "#2563eb",
+    "--ht-green": "#2563eb",
+    "--ht-gold": "#ca8a04",
+    "--ht-red": "#dc2626"
+  },
+  "defaultQuery": "llama instruct gguf",
+  "storageKey": "enterprise_model_hub"
+}

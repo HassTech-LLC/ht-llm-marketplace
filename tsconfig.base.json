@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@ht-llm-marketplace/sdk": ["packages/sdk/src/index.ts"],
+      "@ht-llm-marketplace/react": ["packages/react/src/index.ts"],
+      "@ht-llm-marketplace/react/styles.css": ["packages/react/src/styles.css"],
+      "@ht-llm-marketplace/react/styles.css?inline": ["packages/react/src/styles.css"]
+    },
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["node"]
+  }
+}
