@@ -5,18 +5,13 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   ArtifactVerification,
   BenchmarkResult,
-  CompatibilityScorecard,
   DeletePlan,
-  DocumentSearchResult,
   DownloadJob,
   EngineRuntimeConfig,
   InventoryArtifact,
-  LocalDocument,
   LocalResponsesResponse,
   RuntimeId
 } from "@ht-llm-marketplace/sdk";
-import { chunkText, lexicalScore } from "./documents/local-rag.js";
-import type { DocumentChunk, StoredDocumentEmbedding } from "./documents/vector-store.js";
 import { defaultRuntimeConfig, sanitizeRuntimeConfig } from "./runtime/config.js";
 
 export interface ArtifactInput {
@@ -277,128 +272,6 @@ export class MarketplaceStore {
       .map((row) => mapBenchmark(row as Row));
   }
 
-  addDocument(input: { name: string; content: string }): LocalDocument {
-    const now = new Date().toISOString();
-    const id = randomUUID();
-    const content = input.content.trim();
-    const chunks = chunkText(content).map((chunk) => ({ ...chunk, documentId: id }));
-    this.db.prepare("INSERT INTO documents (id, name, size_bytes, created_at) VALUES (?, ?, ?, ?)").run(
-      id,
-      input.name,
-      Buffer.byteLength(content, "utf8"),
-      now
-    );
-    const insert = this.db.prepare("INSERT INTO document_chunks (document_id, chunk_index, content) VALUES (?, ?, ?)");
-    for (const chunk of chunks) {
-      insert.run(id, chunk.index, chunk.content);
-    }
-    return { id, name: input.name, sizeBytes: Buffer.byteLength(content, "utf8"), chunkCount: chunks.length, createdAt: now };
-  }
-
-  listDocuments(): LocalDocument[] {
-    return this.db
-      .prepare(
-        `SELECT d.id, d.name, d.size_bytes, d.created_at, COUNT(c.chunk_index) AS chunk_count
-         FROM documents d
-         LEFT JOIN document_chunks c ON c.document_id = d.id
-         GROUP BY d.id
-         ORDER BY d.created_at DESC`
-      )
-      .all()
-      .map((row) => mapDocument(row as Row));
-  }
-
-  searchDocuments(query: string, limit = 5): DocumentSearchResult[] {
-    const term = `%${query.toLowerCase().replace(/[%_]/g, "")}%`;
-    return this.db
-      .prepare(
-        `SELECT d.id AS document_id, d.name AS document_name, c.chunk_index, c.content
-         FROM document_chunks c
-         JOIN documents d ON d.id = c.document_id
-         WHERE lower(c.content) LIKE ?
-         LIMIT ?`
-      )
-      .all(term, limit * 4)
-      .map((row) => {
-        const item = row as Row;
-        return {
-          documentId: String(item.document_id),
-          documentName: String(item.document_name),
-          chunkIndex: Number(item.chunk_index),
-          content: String(item.content),
-          score: lexicalScore(query, String(item.content)),
-          source: "lexical" as const
-        };
-      })
-      .filter((result) => result.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-  }
-
-  listDocumentChunks(documentId: string): DocumentChunk[] {
-    return this.db
-      .prepare(
-        `SELECT d.id AS document_id, d.name AS document_name, c.chunk_index, c.content
-         FROM document_chunks c
-         JOIN documents d ON d.id = c.document_id
-         WHERE d.id = ?
-         ORDER BY c.chunk_index`
-      )
-      .all(documentId)
-      .map((row) => mapDocumentChunk(row as Row));
-  }
-
-  addDocumentEmbedding(input: {
-    documentId: string;
-    chunkIndex: number;
-    model: string;
-    dimensions: number;
-    vector: number[];
-    createdAt?: string;
-  }) {
-    this.db
-      .prepare(
-        `INSERT INTO document_embeddings
-          (document_id, chunk_index, model, dimensions, vector_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(document_id, chunk_index, model) DO UPDATE SET
-           dimensions=excluded.dimensions,
-           vector_json=excluded.vector_json,
-           created_at=excluded.created_at`
-      )
-      .run(
-        input.documentId,
-        input.chunkIndex,
-        input.model,
-        input.dimensions,
-        JSON.stringify(input.vector),
-        input.createdAt || new Date().toISOString()
-      );
-  }
-
-  listDocumentEmbeddings(model: string): StoredDocumentEmbedding[] {
-    return this.db
-      .prepare(
-        `SELECT d.id AS document_id, d.name AS document_name, c.chunk_index, c.content, e.model, e.dimensions, e.vector_json
-         FROM document_embeddings e
-         JOIN document_chunks c ON c.document_id = e.document_id AND c.chunk_index = e.chunk_index
-         JOIN documents d ON d.id = c.document_id
-         WHERE e.model = ?
-         ORDER BY d.created_at DESC, c.chunk_index ASC`
-      )
-      .all(model)
-      .map((row) => {
-        const item = row as Row;
-        return {
-          ...mapDocumentChunk(item),
-          model: String(item.model),
-          dimensions: Number(item.dimensions),
-          vector: parseVectorJson(item.vector_json)
-        };
-      })
-      .filter((item) => item.vector.length > 0);
-  }
-
   addResponse(input: { id: string; model: string; request: unknown; response: LocalResponsesResponse; createdAt?: string }): LocalResponsesResponse {
     this.db
       .prepare(
@@ -438,20 +311,6 @@ export class MarketplaceStore {
       )
       .run(JSON.stringify(sanitized), new Date().toISOString());
     return sanitized;
-  }
-
-  addCompatibilityRun(input: CompatibilityScorecard): CompatibilityScorecard {
-    this.db
-      .prepare("INSERT INTO compatibility_runs (id, result_json, created_at) VALUES (?, ?, ?)")
-      .run(randomUUID(), JSON.stringify(input), input.generatedAt);
-    return input;
-  }
-
-  latestCompatibilityRun(): CompatibilityScorecard | undefined {
-    const row = this.db
-      .prepare("SELECT result_json FROM compatibility_runs ORDER BY created_at DESC LIMIT 1")
-      .get() as { result_json?: string } | undefined;
-    return row?.result_json ? (JSON.parse(row.result_json) as CompatibilityScorecard) : undefined;
   }
 
   private migrate() {
@@ -531,32 +390,6 @@ export class MarketplaceStore {
         created_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS documents (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS document_chunks (
-        document_id TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        content TEXT NOT NULL,
-        PRIMARY KEY (document_id, chunk_index),
-        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS document_embeddings (
-        document_id TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        model TEXT NOT NULL,
-        dimensions INTEGER NOT NULL,
-        vector_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (document_id, chunk_index, model),
-        FOREIGN KEY (document_id, chunk_index) REFERENCES document_chunks(document_id, chunk_index) ON DELETE CASCADE
-      );
-
       CREATE TABLE IF NOT EXISTS responses (
         id TEXT PRIMARY KEY,
         model TEXT NOT NULL,
@@ -569,12 +402,6 @@ export class MarketplaceStore {
         id TEXT PRIMARY KEY,
         config_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS compatibility_runs (
-        id TEXT PRIMARY KEY,
-        result_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
       );
     `);
 
@@ -648,35 +475,6 @@ function mapBenchmark(row: Row): BenchmarkResult {
     error: nullableString(row.error),
     createdAt: String(row.created_at)
   };
-}
-
-function mapDocument(row: Row): LocalDocument {
-  return {
-    id: String(row.id),
-    name: String(row.name),
-    sizeBytes: Number(row.size_bytes),
-    chunkCount: Number(row.chunk_count || 0),
-    createdAt: String(row.created_at)
-  };
-}
-
-function mapDocumentChunk(row: Row): DocumentChunk {
-  return {
-    documentId: String(row.document_id),
-    documentName: String(row.document_name),
-    chunkIndex: Number(row.chunk_index),
-    content: String(row.content)
-  };
-}
-
-function parseVectorJson(value: unknown): number[] {
-  try {
-    const parsed = JSON.parse(String(value || "[]"));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry));
-  } catch {
-    return [];
-  }
 }
 
 function mapJob(row: Row): DownloadJob {

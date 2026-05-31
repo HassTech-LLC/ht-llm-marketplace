@@ -5,7 +5,7 @@ const steps = [
   ["release:check", ["run", "release:check"]],
   ["desktop:check", ["run", "desktop:check"]],
   ["installer smoke", ["run", "smoke:installer"]],
-  ["studio proof smoke", ["run", "smoke:studio"]]
+  ["studio smoke", ["run", "smoke:studio"]]
 ];
 
 if (process.env.HT_PEAK_INCLUDE_DOCKER === "1") {

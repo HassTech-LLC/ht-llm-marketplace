@@ -17,15 +17,17 @@ try {
   try {
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     await page.goto(studioUrl, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Proof" }).click();
-    await page.getByText("Readiness Dashboard").waitFor({ timeout: 10_000 });
-    await page.getByText("Claim").waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Marketplace" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "HT Studio" }).click();
+    await page.getByText("Run a Model").waitFor({ timeout: 10_000 });
     const body = await page.textContent("body");
-    if (!body?.includes("Replacement proof")) throw new Error("Proof dashboard did not render.");
+    if (body?.includes("Documents") || body?.includes("Readiness Dashboard")) {
+      throw new Error("Removed Documents/Proof surfaces are still visible.");
+    }
   } finally {
     await browser.close();
   }
-  console.log("studio proof smoke ok");
+  console.log("studio smoke ok");
 } finally {
   await stopChildren();
 }

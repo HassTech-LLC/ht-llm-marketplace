@@ -16,7 +16,6 @@ export const compatibilityCases = [
   { client: "jan", method: "GET", path: "/api/queue", allowed: [200] },
   { client: "localai", method: "GET", path: "/api/engine/config", allowed: [200] },
   { client: "llama.cpp", method: "GET", path: "/api/engine/server/status", allowed: [200] },
-  { client: "proof", method: "GET", path: "/api/compatibility/scorecard", allowed: [200] },
   { client: "routing", method: "GET", path: "/api/routing/standard", allowed: [200] }
 ];
 

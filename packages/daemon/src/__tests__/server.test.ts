@@ -85,12 +85,8 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
         setArtifactVerification: vi.fn((verification: any) => verification),
         listBenchmarks: vi.fn().mockReturnValue([]),
         addBenchmark: vi.fn((benchmark: any) => benchmark),
-        listDocuments: vi.fn().mockReturnValue([]),
-        addDocument: vi.fn((document: any) => ({ id: "doc-1", name: document.name, sizeBytes: document.content.length, chunkCount: 1, createdAt: new Date(0).toISOString() })),
-        searchDocuments: vi.fn().mockReturnValue([]),
         addResponse: vi.fn((_response: any) => _response.response),
         getResponse: vi.fn(),
-        addCompatibilityRun: vi.fn((scorecard: any) => scorecard),
         getRuntimeConfig: vi.fn().mockReturnValue({
           keepWarm: true,
           unloadAfterIdleMs: 900000,
@@ -335,38 +331,6 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     const parsed = JSON.parse(res.body);
     expect(parsed.object).toBe("list");
     expect(parsed.data[0].embedding).toEqual([1, 0]);
-  });
-
-  it("POST /api/documents/ask returns an answer with citations", async () => {
-    const mockContext = createMockContext();
-    mockContext.store.searchDocuments = vi.fn().mockReturnValue([
-      { documentId: "doc_1", documentName: "replacement-readiness.md", chunkIndex: 0, score: 0.9, content: "API parity includes /v1/responses." }
-    ]);
-    mockContext.engine.chat = vi.fn().mockResolvedValue("Use /v1/responses for Responses API clients.");
-    const server = createServer(mockContext);
-    const handler = (server as any)._events.request;
-    const req = createMockRequest("POST", "/api/documents/ask", { question: "Which Responses route exists?", limit: 3 });
-    const res = createMockResponse();
-
-    await handler(req, res);
-
-    expect(res.statusCode).toBe(200);
-    const parsed = JSON.parse(res.body);
-    expect(parsed.answer).toContain("/v1/responses");
-    expect(parsed.citations[0].documentId).toBe("doc_1");
-  });
-
-  it("GET /api/compatibility/scorecard reports foundation claim", async () => {
-    const mockContext = createMockContext();
-    const server = createServer(mockContext);
-    const handler = (server as any)._events.request;
-    const req = createMockRequest("GET", "/api/compatibility/scorecard");
-    const res = createMockResponse();
-
-    await handler(req, res);
-
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body).claim).toBe("foundation");
   });
 
   it("GET and PUT /api/engine/config expose sanitized runtime controls", async () => {

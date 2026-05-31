@@ -11,8 +11,6 @@ import { LmStudioAdapter } from "./adapters/lmstudio.js";
 import { openAiCompatibleStatus } from "./adapters/openai.js";
 import type { DaemonConfig } from "./config.js";
 import { confirmDeletePlan, createDeletePlan } from "./delete/safety.js";
-import { buildDocumentPrompt } from "./documents/local-rag.js";
-import { mergeDocumentResults, semanticSearch } from "./documents/vector-store.js";
 import { DownloadManager } from "./downloads/jobs.js";
 import { createEmbeddingProvider, normalizeEmbeddingInput } from "./embeddings/local.js";
 import type { EmbeddingProvider, LocalEmbeddingRequest } from "./embeddings/types.js";
@@ -41,7 +39,6 @@ import {
   type OpenAiUsage
 } from "./engine/openai.js";
 import { fetchTextWithLimit, README_RESPONSE_LIMIT } from "./http.js";
-import { compatibilityScorecard } from "./compatibility.js";
 import { estimateTokens as estimateResponseTokens, inputToMessages, responseObject, streamEvents } from "./responses/adapter.js";
 import type { LocalResponsesRequest } from "./responses/types.js";
 import { LlamaServerManager } from "./runtime/llama-server.js";
@@ -200,71 +197,6 @@ export function createServer(context: RuntimeContext) {
       const cancelQueue = url.pathname.match(/^\/api\/queue\/([^/]+)\/cancel$/);
       if (request.method === "POST" && cancelQueue) {
         return json(response, { ok: context.queue.cancel(decodeURIComponent(cancelQueue[1])) });
-      }
-
-      if (route === "GET /api/compatibility/scorecard") {
-        const embeddings = await context.embeddings;
-        const scorecard = compatibilityScorecard({
-          modelIndex: context.modelIndex.status(),
-          benchmarks: context.store.listBenchmarks(),
-          queue: context.queue.status(),
-          embeddingsAvailable: Boolean(embeddings),
-          delegatedServer: context.llamaServer.status(),
-          documentsIndexed: context.store.listDocuments().length
-        });
-        try {
-          context.store.addCompatibilityRun(scorecard);
-        } catch {
-          // Scorecard persistence is evidence history only; never fail the live proof route.
-        }
-        return json(response, scorecard);
-      }
-
-      if (route === "GET /api/documents") {
-        return json(response, { documents: context.store.listDocuments() });
-      }
-
-      if (route === "POST /api/documents") {
-        const body = requireObject(await readJson<{ name?: string; content?: string }>(request));
-        const document = context.store.addDocument({
-          name: optionalString(body.name, "name", 200) || "Untitled document",
-          content: requireString(body.content, "content", 2_000_000)
-        });
-        await indexDocumentEmbeddings(context, document.id);
-        return json(response, { document }, 201);
-      }
-
-      if (route === "GET /api/documents/search") {
-        const query = required(url.searchParams.get("q"), "q");
-        const limit = clampInt(Number.parseInt(url.searchParams.get("limit") || "5", 10), 1, 20);
-        return json(response, { results: await retrieveDocumentCitations(context, query, limit) });
-      }
-
-      if (route === "POST /api/documents/ask") {
-        const body = requireObject(await readJson<{ question?: string; documentIds?: string[]; limit?: number; model?: string }>(request, 128_000));
-        const question = requireString(body.question, "question", 4_000);
-        const limit = optionalClampedInt(body.limit, "limit", 1, 12) || 6;
-        const allowedIds = Array.isArray(body.documentIds)
-          ? new Set(body.documentIds.map((id) => requireString(id, "documentIds", 200)))
-          : undefined;
-        const citations = (await retrieveDocumentCitations(context, question, limit * 2))
-          .filter((citation) => !allowedIds || allowedIds.has(citation.documentId))
-          .slice(0, limit);
-        const prompt = buildDocumentPrompt(question, citations);
-        const model = optionalString(body.model, "model", 500);
-        const delegatedError = delegatedBackendError(context);
-        if (delegatedError) return json(response, { error: delegatedError.message }, delegatedError.status);
-        if (model && context.engine.loadedModel !== model) {
-          const target = resolveLocalModelByName(context, model);
-          if (target) await context.engine.load({ modelPath: target.path, displayName: target.displayName });
-        }
-        if (!context.engine.isLoaded()) {
-          await loadStandardRouteModel(context);
-        }
-        const answer = await context.queue.run(`documents:${context.engine.loadedModel || model || "loaded"}`, (signal) =>
-          context.engine.chat([{ role: "user", content: prompt }], { maxTokens: 512, temperature: 0.2, signal })
-        );
-        return json(response, { answer, citations });
       }
 
       if (route === "GET /api/catalog/search") {
@@ -713,36 +645,6 @@ async function loadStandardRouteModel(context: RuntimeContext) {
     modelPath: decision.selected.path,
     displayName: decision.selected.name
   });
-}
-
-async function indexDocumentEmbeddings(context: RuntimeContext, documentId: string) {
-  const provider = await context.embeddings;
-  if (!provider) return;
-  const chunks = context.store.listDocumentChunks(documentId);
-  if (chunks.length === 0) return;
-  const result = await provider.embed(chunks.map((chunk) => chunk.content));
-  for (let index = 0; index < chunks.length; index += 1) {
-    const vector = result.vectors[index];
-    if (!vector) continue;
-    context.store.addDocumentEmbedding({
-      documentId,
-      chunkIndex: chunks[index].chunkIndex,
-      model: result.model,
-      dimensions: vector.length,
-      vector
-    });
-  }
-}
-
-async function retrieveDocumentCitations(context: RuntimeContext, question: string, limit: number) {
-  const lexical = context.store.searchDocuments(question, limit);
-  const provider = await context.embeddings;
-  if (!provider) return lexical;
-  const query = await provider.embed([question]);
-  const vector = query.vectors[0];
-  if (!vector) return lexical;
-  const semantic = semanticSearch(vector, context.store.listDocumentEmbeddings(query.model), limit);
-  return mergeDocumentResults(lexical, semantic, limit);
 }
 
 function ownedEngineModels(context: RuntimeContext): RuntimeModel[] {

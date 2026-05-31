@@ -33,16 +33,13 @@ jobs:
       - name: Compatibility smoke
         run: npm run check:compatibility
 
-      - name: Scorecard gate
-        run: npm run scorecard:gate
-
       - name: Installer smoke
         run: npm run smoke:installer
 
       - name: Install Playwright browser
         run: npx playwright install chromium --with-deps
 
-      - name: Studio proof smoke
+      - name: Studio smoke
         run: npm run smoke:studio
 
       - name: Verify package contents

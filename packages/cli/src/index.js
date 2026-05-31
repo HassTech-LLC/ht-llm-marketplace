@@ -27,8 +27,6 @@ try {
   } else if (command === "bench") {
     const model = args[0];
     console.log(JSON.stringify(await postJson("/api/benchmarks/run", { model, prompt: args.slice(1).join(" ") || "hi" }), null, 2));
-  } else if (command === "scorecard") {
-    console.log(JSON.stringify(await getJson("/api/compatibility/scorecard"), null, 2));
   } else if (command === "start" || command === "serve") {
     await startDaemon();
   } else {
@@ -197,5 +195,4 @@ function printHelp() {
   console.log("  htlm bench [model]        Run a short local benchmark");
   console.log("  htlm doctor               Print live local scanner output");
   console.log("  htlm inventory            Print local inventory");
-  console.log("  htlm scorecard            Print replacement compatibility scorecard");
 }
