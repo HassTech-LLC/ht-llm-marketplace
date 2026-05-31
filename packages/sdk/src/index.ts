@@ -337,15 +337,6 @@ export interface EngineRuntimeConfig {
   };
 }
 
-export interface CompatibilityScorecard {
-  generatedAt: string;
-  claim: "foundation" | "candidate" | "best-replacement";
-  summary: string;
-  evidence: Array<{ id: string; label: string; status: "pass" | "partial" | "planned"; detail: string }>;
-  competitors: Array<{ name: string; parity: "strong" | "partial" | "planned"; covered: string[]; gaps: string[] }>;
-  gates: Array<{ id: string; label: string; status: "pass" | "partial" | "planned" }>;
-}
-
 export interface LocalEmbeddingRequest {
   model?: string;
   input: string | string[];
@@ -359,28 +350,6 @@ export interface LocalEmbeddingResponse {
   model: string;
   data: Array<{ object: "embedding"; index: number; embedding: number[] | string }>;
   usage: { prompt_tokens: number; total_tokens: number };
-}
-
-export interface LocalDocument {
-  id: string;
-  name: string;
-  sizeBytes: number;
-  chunkCount: number;
-  createdAt: string;
-}
-
-export interface DocumentSearchResult {
-  documentId: string;
-  documentName: string;
-  chunkIndex: number;
-  content: string;
-  score: number;
-  source?: "lexical" | "semantic" | "hybrid";
-}
-
-export interface DocumentAskResponse {
-  answer: string;
-  citations: DocumentSearchResult[];
 }
 
 export interface LocalResponsesRequest {
@@ -576,28 +545,6 @@ export class MarketplaceClient {
 
   verifyArtifact(id: string) {
     return this.post<{ verification: ArtifactVerification }>(`/api/artifacts/${encodeURIComponent(id)}/verify`, {});
-  }
-
-  compatibilityScorecard() {
-    return this.get<CompatibilityScorecard>("/api/compatibility/scorecard");
-  }
-
-  documents() {
-    return this.get<{ documents: LocalDocument[] }>("/api/documents");
-  }
-
-  addDocument(request: { name: string; content: string }) {
-    return this.post<{ document: LocalDocument }>("/api/documents", request);
-  }
-
-  searchDocuments(query: string, limit = 5) {
-    return this.get<{ results: DocumentSearchResult[] }>(
-      `/api/documents/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(limit))}`
-    );
-  }
-
-  askDocument(request: { question: string; documentIds?: string[]; limit?: number; model?: string }) {
-    return this.post<DocumentAskResponse>("/api/documents/ask", request);
   }
 
   embeddings(request: LocalEmbeddingRequest) {
