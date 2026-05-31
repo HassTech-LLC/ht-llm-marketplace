@@ -1,13 +1,14 @@
 import type { ArtifactFormat, CatalogFile, CatalogFilePart, CatalogItem, CompatibilityScore } from "@ht-llm-marketplace/sdk";
+import { fetchJsonWithLimit } from "../http.js";
 
 const HUB = "https://huggingface.co";
+const HF_JSON_LIMIT = 10 * 1024 * 1024;
 
 export async function searchHuggingFace(query: string, limit = 12): Promise<CatalogItem[]> {
   if (!query.trim()) return curatedSearchSeeds();
-  const url = `${HUB}/api/models?search=${encodeURIComponent(query)}&filter=gguf&sort=downloads&direction=-1&limit=${limit}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Hugging Face search failed with ${response.status}`);
-  const models = (await response.json()) as HfModel[];
+  const safeLimit = clampInt(limit, 1, 50);
+  const url = `${HUB}/api/models?search=${encodeURIComponent(query.slice(0, 200))}&filter=gguf&sort=downloads&direction=-1&limit=${safeLimit}`;
+  const models = await fetchJsonWithLimit<HfModel[]>(url, { maxBytes: HF_JSON_LIMIT });
   return models.map((model) => {
     const tags = model.tags || [];
     return {
@@ -30,20 +31,21 @@ export async function searchHuggingFace(query: string, limit = 12): Promise<Cata
 }
 
 export async function listHuggingFaceFiles(repoId: string, revision = "main"): Promise<CatalogFile[]> {
-  const url = `${HUB}/api/models/${repoId}/tree/${encodeURIComponent(revision)}?recursive=1`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Hugging Face file listing failed with ${response.status}`);
-  const files = (await response.json()) as HfFile[];
+  const normalizedRepoId = validateHuggingFaceRepoId(repoId);
+  const normalizedRevision = validateHuggingFaceRevision(revision);
+  const url = `${HUB}/api/models/${encodeRepoId(normalizedRepoId)}/tree/${encodeURIComponent(normalizedRevision)}?recursive=1`;
+  const files = await fetchJsonWithLimit<HfFile[]>(url, { maxBytes: HF_JSON_LIMIT });
   const catalogFiles = files
     .filter((file) => file.type !== "directory")
     .map((file) => {
-      const format = detectFormat(file.path);
+      const filePath = validateHuggingFacePath(file.path);
+      const format = detectFormat(filePath);
       return {
-        repoId,
-        path: file.path,
+        repoId: normalizedRepoId,
+        path: filePath,
         sizeBytes: file.size,
         format,
-        downloadUrl: `${HUB}/${repoId}/resolve/${encodeURIComponent(revision)}/${file.path}`,
+        downloadUrl: huggingFaceResolveUrl(normalizedRepoId, normalizedRevision, filePath),
         runnable: format === "gguf",
         fit: compatibilityFromSize(file.size, format)
       };
@@ -73,6 +75,38 @@ export async function dryRunHuggingFaceDownload(repoId: string, revision: string
       wouldDownload: true
     }))
   };
+}
+
+export function validateHuggingFaceRepoId(repoId: string): string {
+  const value = requireSafeString(repoId, "repoId", 200);
+  const parts = value.split("/");
+  if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(part) || part.includes(".."))) {
+    throw new Error("Invalid Hugging Face repoId. Expected owner/name with safe characters.");
+  }
+  return value;
+}
+
+export function validateHuggingFaceRevision(revision = "main"): string {
+  const value = requireSafeString(revision || "main", "revision", 200);
+  if (value.startsWith("/") || value.includes("\\") || value.split("/").some((part) => part === "..")) {
+    throw new Error("Invalid Hugging Face revision.");
+  }
+  if (!/^[A-Za-z0-9._/-]+$/.test(value)) throw new Error("Invalid Hugging Face revision.");
+  return value;
+}
+
+export function validateHuggingFacePath(filePath: string): string {
+  const value = requireSafeString(filePath, "filename", 500);
+  if (value.startsWith("/") || value.includes("\\") || value.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new Error("Invalid Hugging Face file path.");
+  }
+  return value;
+}
+
+export function huggingFaceResolveUrl(repoId: string, revision: string, filePath: string): string {
+  return `${HUB}/${encodeRepoId(validateHuggingFaceRepoId(repoId))}/resolve/${encodeURIComponent(
+    validateHuggingFaceRevision(revision)
+  )}/${encodePath(validateHuggingFacePath(filePath))}`;
 }
 
 export function detectFormat(filePath: string): ArtifactFormat {
@@ -184,6 +218,26 @@ function compatibilityFromUnknown(tags: string[]): CompatibilityScore {
 
 function tagValue(tags: string[], prefix: string) {
   return tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length);
+}
+
+function requireSafeString(value: string, name: string, maxLength: number): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) throw new Error(`${name} is too long`);
+  return trimmed;
+}
+
+function encodeRepoId(repoId: string): string {
+  return repoId.split("/").map(encodeURIComponent).join("/");
+}
+
+function encodePath(filePath: string): string {
+  return filePath.split("/").map(encodeURIComponent).join("/");
+}
+
+function clampInt(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
 function curatedSearchSeeds(): CatalogItem[] {

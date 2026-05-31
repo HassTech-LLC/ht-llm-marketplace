@@ -1,0 +1,569 @@
+import { describe, expect, it, vi } from "vitest";
+import { createServer, readJson } from "../server.js";
+import http from "node:http";
+import EventEmitter from "node:events";
+import fs from "node:fs";
+
+// Helper to create mock request
+function createMockRequest(method: string, urlPath: string, bodyObj?: any, headers?: Record<string, string>) {
+  const req = new EventEmitter() as any;
+  req.method = method;
+  req.url = urlPath;
+  req.headers = {
+    host: "127.0.0.1:3001",
+    ...headers
+  };
+  
+  if (bodyObj) {
+    req[Symbol.asyncIterator] = async function* () {
+      yield Buffer.from(JSON.stringify(bodyObj));
+    };
+  } else {
+    req[Symbol.asyncIterator] = async function* () {};
+  }
+  return req;
+}
+
+// Helper to create mock response
+function createMockResponse() {
+  const res = {
+    statusCode: 200,
+    headers: {} as Record<string, string>,
+    body: "",
+    writeHead(status: number, headers?: any) {
+      this.statusCode = status;
+      if (headers) {
+        this.headers = { ...this.headers, ...headers };
+      }
+      return this;
+    },
+    setHeader(key: string, value: string) {
+      this.headers[key] = value;
+      return this;
+    },
+    write(chunk: any) {
+      this.body += chunk.toString();
+      return true;
+    },
+    end(chunk?: any) {
+      if (chunk) {
+        this.body += chunk.toString();
+      }
+      return this;
+    }
+  } as any;
+  return res;
+}
+
+describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
+  // A fresh mock context generator to isolate test states
+  function createMockContext() {
+    const ctx = {
+      config: {
+        host: "127.0.0.1",
+        allowedOrigins: ["*"],
+        storageDir: "./storage",
+        modelsDir: "./models",
+        downloadsDir: "./downloads",
+        dbPath: "./db.sqlite",
+        ollamaHost: "http://127.0.0.1:11434",
+        lmStudioHost: "http://127.0.0.1:1234",
+        modelScanDirs: []
+      },
+      store: {
+        listArtifacts: vi.fn().mockReturnValue([
+          {
+            owned: true,
+            path: "./models/Phi-3-mini-4k-instruct-q4.gguf",
+            name: "phi-3",
+            displayName: "phi-3",
+            sizeBytes: 2200000000,
+            runtime: "llamacpp"
+          }
+        ]),
+        getArtifact: vi.fn(),
+        setArtifactVerification: vi.fn((verification: any) => verification),
+        listBenchmarks: vi.fn().mockReturnValue([]),
+        addBenchmark: vi.fn((benchmark: any) => benchmark),
+        listDocuments: vi.fn().mockReturnValue([]),
+        addDocument: vi.fn((document: any) => ({ id: "doc-1", name: document.name, sizeBytes: document.content.length, chunkCount: 1, createdAt: new Date(0).toISOString() })),
+        searchDocuments: vi.fn().mockReturnValue([]),
+        addResponse: vi.fn((_response: any) => _response.response),
+        getResponse: vi.fn(),
+        addCompatibilityRun: vi.fn((scorecard: any) => scorecard),
+        getRuntimeConfig: vi.fn().mockReturnValue({
+          keepWarm: true,
+          unloadAfterIdleMs: 900000,
+          contextSize: 4096,
+          gpuLayers: "auto",
+          threads: "auto",
+          backend: "in-process",
+          draftModel: null,
+          delegatedServer: { enabled: false, port: 8080, parallel: 4, continuousBatching: true }
+        }),
+        setRuntimeConfig: vi.fn((config: any) => config),
+        listAuditLog: vi.fn(),
+        audit: vi.fn()
+      },
+      ollama: {
+        status: vi.fn().mockResolvedValue({ id: "ollama", online: false }),
+        chat: vi.fn()
+      },
+      lmstudio: {
+        status: vi.fn().mockResolvedValue({ id: "lmstudio", online: false })
+      },
+      downloads: {
+        list: vi.fn().mockReturnValue([])
+      },
+      engine: {
+        available: true,
+        gpu: "CUDA" as const,
+        loadedModel: undefined as string | undefined,
+        loadedPath: undefined as string | undefined,
+        isLoaded: vi.fn().mockImplementation(function(this: any) {
+          return !!this.loadedModel;
+        }),
+        status: vi.fn().mockReturnValue({ id: "llamacpp", online: true, models: [] }),
+        readArchitecture: vi.fn().mockResolvedValue("llama"),
+        load: vi.fn().mockImplementation(function(this: any, options: any) {
+          this.loadedModel = options.displayName || "loaded";
+          this.loadedPath = options.modelPath;
+          return Promise.resolve({ loaded: this.loadedModel, gpu: "CUDA" });
+        }),
+        chat: vi.fn().mockResolvedValue("Mock response")
+      },
+      modelIndex: {
+        models: vi.fn().mockResolvedValue([
+          {
+            id: "./models/Phi-3-mini-4k-instruct-q4.gguf",
+            path: "./models/Phi-3-mini-4k-instruct-q4.gguf",
+            name: "phi-3",
+            sizeBytes: 2200000000,
+            source: "marketplace",
+            dir: "models",
+            runnable: true,
+            indexedAt: new Date(0).toISOString()
+          },
+          {
+            id: "virtual:ternary-ssm-specialist",
+            path: "virtual:ternary-ssm-specialist",
+            name: "Ternary-SSM-Specialist",
+            sizeBytes: 850000000,
+            source: "Virtual-SSM",
+            dir: "virtual-core",
+            runnable: true,
+            indexedAt: new Date(0).toISOString()
+          }
+        ]),
+        snapshot: vi.fn().mockReturnValue({
+          status: { state: "ready", ttlMs: 30000, modelCount: 2 },
+          models: [
+            {
+              id: "./models/Phi-3-mini-4k-instruct-q4.gguf",
+              path: "./models/Phi-3-mini-4k-instruct-q4.gguf",
+              name: "phi-3",
+              sizeBytes: 2200000000,
+              source: "marketplace",
+              dir: "models",
+              runnable: true,
+              indexedAt: new Date(0).toISOString()
+            },
+            {
+              id: "virtual:ternary-ssm-specialist",
+              path: "virtual:ternary-ssm-specialist",
+              name: "Ternary-SSM-Specialist",
+              sizeBytes: 850000000,
+              source: "Virtual-SSM",
+              dir: "virtual-core",
+              runnable: true,
+              indexedAt: new Date(0).toISOString()
+            }
+          ]
+        }),
+        refresh: vi.fn().mockResolvedValue({
+          status: { state: "ready", ttlMs: 30000, modelCount: 2 },
+          models: []
+        }),
+        status: vi.fn().mockReturnValue({ state: "ready", ttlMs: 30000, modelCount: 2 })
+      },
+      queue: {
+        run: vi.fn((_label: string, work: any) => work(new AbortController().signal)),
+        status: vi.fn().mockReturnValue({ queued: [], recent: [] }),
+        cancel: vi.fn().mockReturnValue(true)
+      },
+      embeddings: Promise.resolve(undefined),
+      llamaServer: {
+        status: vi.fn().mockReturnValue({ available: false, running: false, message: "unavailable" }),
+        start: vi.fn().mockResolvedValue({ available: false, running: false, message: "unavailable" }),
+        stop: vi.fn().mockResolvedValue({ available: false, running: false, message: "unavailable" })
+      }
+    } as any;
+    return ctx;
+  }
+
+  it("GET /api/version returns the daemon's own package.json version", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/version");
+    const res = createMockResponse();
+
+    await handler(req, res);
+    if (res.statusCode !== 200) {
+      console.log("FAILING RESPONSE:", res.body);
+    }
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    // Don't pin to a literal — pin to the actual package.json so the two cannot drift.
+    const pkgPath = new URL("../../package.json", import.meta.url);
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    expect(parsed).toEqual({ version: pkg.version });
+  });
+
+  it("OPTIONS preflight allows browser runtime config PUT requests", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("OPTIONS", "/api/engine/config", undefined, {
+      origin: "http://127.0.0.1:3000",
+      "access-control-request-method": "PUT"
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(204);
+    expect(res.headers["access-control-allow-methods"]).toContain("PUT");
+  });
+
+  it("GET /api/tags lists both local and owned GGUF models formatted for Ollama", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/tags");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.models.length).toBeGreaterThanOrEqual(1);
+    const phi3 = parsed.models.find((m: any) => m.name === "phi-3");
+    expect(phi3).toBeDefined();
+    expect(phi3).toMatchObject({
+      name: "phi-3",
+      model: "phi-3",
+      size: 2200000000,
+      details: {
+        format: "gguf",
+        family: "llama"
+      }
+    });
+  });
+
+  it("GET /api/models/index returns cached model-index state", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/models/index");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.index.state).toBe("ready");
+    expect(parsed.models.some((model: any) => model.name === "phi-3")).toBe(true);
+  });
+
+  it("GET /api/routing/standard returns benchmark-aware standard route decision", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.listBenchmarks = vi.fn().mockReturnValue([
+      {
+        id: "bench-1",
+        model: "phi-3",
+        runtime: "llamacpp",
+        prompt: "hi",
+        firstTokenMs: 90,
+        totalMs: 220,
+        tokensPerSecond: 80,
+        tokenCount: 12,
+        ok: true,
+        createdAt: new Date(0).toISOString()
+      }
+    ]);
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/routing/standard");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.selected.name).toBe("phi-3");
+    expect(parsed.candidates[0].healthy).toBe(true);
+  });
+
+  it("POST /v1/embeddings returns stable unsupported response until local embeddings are enabled", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/embeddings", { input: "hello", model: "local" });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(501);
+    expect(JSON.parse(res.body).error.type).toBe("not_implemented");
+  });
+
+  it("POST /v1/embeddings returns embeddings when a local provider is enabled", async () => {
+    const mockContext = createMockContext();
+    mockContext.embeddings = Promise.resolve({
+      model: "local-test-embed",
+      embed: vi.fn().mockResolvedValue({ model: "local-test-embed", vectors: [[1, 0]], tokenEstimate: 1, dimensions: 2 })
+    });
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/embeddings", { input: "hello", model: "local" });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.object).toBe("list");
+    expect(parsed.data[0].embedding).toEqual([1, 0]);
+  });
+
+  it("POST /api/documents/ask returns an answer with citations", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.searchDocuments = vi.fn().mockReturnValue([
+      { documentId: "doc_1", documentName: "replacement-readiness.md", chunkIndex: 0, score: 0.9, content: "API parity includes /v1/responses." }
+    ]);
+    mockContext.engine.chat = vi.fn().mockResolvedValue("Use /v1/responses for Responses API clients.");
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/documents/ask", { question: "Which Responses route exists?", limit: 3 });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.answer).toContain("/v1/responses");
+    expect(parsed.citations[0].documentId).toBe("doc_1");
+  });
+
+  it("GET /api/compatibility/scorecard reports foundation claim", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/compatibility/scorecard");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).claim).toBe("foundation");
+  });
+
+  it("GET and PUT /api/engine/config expose sanitized runtime controls", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const getReq = createMockRequest("GET", "/api/engine/config");
+    const getRes = createMockResponse();
+
+    await handler(getReq, getRes);
+
+    expect(getRes.statusCode).toBe(200);
+    expect(JSON.parse(getRes.body).config.backend).toBe("in-process");
+
+    const putReq = createMockRequest("PUT", "/api/engine/config", { contextSize: 999999, delegatedServer: { parallel: 99 } });
+    const putRes = createMockResponse();
+
+    await handler(putReq, putRes);
+
+    expect(putRes.statusCode).toBe(200);
+    expect(JSON.parse(putRes.body).config.contextSize).toBe(32768);
+  });
+
+  it("GET /api/engine/server/status exposes delegated server status", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/engine/server/status");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).available).toBe(false);
+  });
+
+  it("POST /v1/responses returns and stores OpenAI-style response objects", async () => {
+    const mockContext = createMockContext();
+    mockContext.engine.loadedModel = "phi-3";
+    mockContext.engine.loadedPath = "./models/Phi-3-mini-4k-instruct-q4.gguf";
+    mockContext.engine.chat = vi.fn().mockResolvedValue("hi");
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/responses", { input: "hello", max_output_tokens: 4 });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.object).toBe("response");
+    expect(parsed.output_text).toBe("hi");
+    expect(mockContext.store.addResponse).toHaveBeenCalled();
+  });
+
+  it("POST /api/chat auto-routes local GGUF model requests to in-process engine", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    
+    // Requesting a local model
+    const req = createMockRequest("POST", "/api/chat", {
+      model: "phi-3",
+      messages: [{ role: "user", content: "Hello there" }],
+      stream: false
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    // Should load the model dynamically since it matches a local name
+    expect(mockContext.engine.load).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelPath: "./models/Phi-3-mini-4k-instruct-q4.gguf",
+        displayName: "phi-3"
+      })
+    );
+    expect(mockContext.engine.chat).toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.model).toBe("phi-3");
+    expect(parsed.message.content).toBe("Mock response");
+  });
+
+  it("POST /api/chat honors an explicit Ollama runtime when names overlap local models", async () => {
+    const mockContext = createMockContext();
+    mockContext.ollama.chat.mockResolvedValue(
+      new Response(JSON.stringify({ model: "phi-3", message: { role: "assistant", content: "Ollama response" }, done: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+
+    const req = createMockRequest("POST", "/api/chat", {
+      runtime: "ollama",
+      model: "phi-3",
+      messages: [{ role: "user", content: "Hello there" }],
+      stream: false
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(mockContext.engine.load).not.toHaveBeenCalled();
+    expect(mockContext.ollama.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ runtime: "ollama", model: "phi-3" })
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Ollama response");
+  });
+
+  it("POST /api/chat auto-routes virtual Ternary SSM Specialist model correctly", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    
+    const req = createMockRequest("POST", "/api/chat", {
+      model: "Ternary-SSM-Specialist",
+      messages: [{ role: "user", content: "What is GLA?" }],
+      stream: false
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(mockContext.engine.load).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelPath: "virtual:ternary-ssm-specialist",
+        displayName: "Ternary-SSM-Specialist"
+      })
+    );
+    expect(mockContext.engine.chat).toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.model).toBe("Ternary-SSM-Specialist");
+    expect(parsed.message.content).toBe("Mock response");
+  });
+
+  it("returns client error statuses from request parsing failures", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/chat") as any;
+    req[Symbol.asyncIterator] = async function* () {
+      yield Buffer.from("{bad");
+    };
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "Request body must be valid JSON." });
+  });
+
+  it("POST /api/runtimes/llamacpp/load loads Ollama blobs directly without .gguf extension", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+
+    // Stub fs.existsSync to report true for a dummy Ollama blob path
+    const mockFs = vi.spyOn(fs, "existsSync").mockReturnValue(true);
+
+    const req = createMockRequest("POST", "/api/runtimes/llamacpp/load", {
+      path: "/home/user/.ollama/models/blobs/sha256-11223344556677889900aabbccddeeff"
+    });
+    const res = createMockResponse();
+
+    try {
+      await handler(req, res);
+      expect(res.statusCode).toBe(200);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.ok).toBe(true);
+      expect(parsed.loaded).toBe("sha256-11223344556677889900aabbccddeeff");
+    } finally {
+      mockFs.mockRestore();
+    }
+  });
+});
+
+describe("readJson", () => {
+  it("rejects oversized request bodies before parsing", async () => {
+    const req = createMockRequest("POST", "/api/chat") as any;
+    req[Symbol.asyncIterator] = async function* () {
+      yield Buffer.alloc(12, "a");
+    };
+
+    await expect(readJson(req, 8)).rejects.toThrow("Request body exceeds 8 bytes.");
+  });
+
+  it("reports invalid JSON as a client error", async () => {
+    const req = createMockRequest("POST", "/api/chat") as any;
+    req[Symbol.asyncIterator] = async function* () {
+      yield Buffer.from("{bad");
+    };
+
+    await expect(readJson(req)).rejects.toThrow("Request body must be valid JSON.");
+  });
+});

@@ -120,5 +120,3 @@ Security and privacy boundaries live in [`docs/security-privacy.md`](docs/securi
 - `examples/plain-html`: plain HTML Web Component embed.
 - `examples/minimal-widget`: smallest possible Web Component embed.
 - `examples/enterprise-white-label`: enterprise-style JSON customization preset.
-
-The Gemini scaffold that started this project is preserved under `legacy/gemini-prototype` for reference only.

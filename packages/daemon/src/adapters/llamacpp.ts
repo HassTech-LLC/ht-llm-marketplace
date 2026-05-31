@@ -1,4 +1,5 @@
 import type { RuntimeStatus } from "@ht-llm-marketplace/sdk";
+import { fetchWithTimeout } from "../http.js";
 
 export async function llamaCppStatus(endpoint?: string): Promise<RuntimeStatus> {
   if (!endpoint) {
@@ -12,7 +13,7 @@ export async function llamaCppStatus(endpoint?: string): Promise<RuntimeStatus> 
   }
 
   try {
-    const response = await fetch(`${endpoint}/health`);
+    const response = await fetchWithTimeout(`${endpoint}/health`, { timeoutMs: 5_000 });
     return {
       id: "llamacpp",
       label: "llama.cpp server",

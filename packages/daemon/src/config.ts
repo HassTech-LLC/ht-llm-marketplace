@@ -47,6 +47,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfig {
 
 function parseOrigins(raw?: string): string[] {
   const defaults = [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
     "http://127.0.0.1:3009",
     "http://localhost:3009",
     "http://127.0.0.1:5173",

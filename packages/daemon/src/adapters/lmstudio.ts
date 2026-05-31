@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { RuntimeLoadRequest, RuntimeModel, RuntimeStatus } from "@ht-llm-marketplace/sdk";
+import { fetchWithTimeout } from "../http.js";
 import { runCommand } from "../utils.js";
 
 export class LmStudioAdapter {
@@ -62,7 +63,7 @@ export class LmStudioAdapter {
 
     if (serverOnline) {
       try {
-        const response = await fetch(`${this.host}/v1/models`);
+        const response = await fetchWithTimeout(`${this.host}/v1/models`, { timeoutMs: 5_000 });
         if (!response.ok) {
           serverOnline = false;
           notes.push(`LM Studio /v1/models returned ${response.status}.`);

@@ -1,4 +1,5 @@
 import type { RuntimeStatus } from "@ht-llm-marketplace/sdk";
+import { fetchWithTimeout } from "../http.js";
 
 export async function openAiCompatibleStatus(endpoint?: string): Promise<RuntimeStatus> {
   if (!endpoint) {
@@ -12,7 +13,7 @@ export async function openAiCompatibleStatus(endpoint?: string): Promise<Runtime
   }
 
   try {
-    const response = await fetch(`${endpoint}/v1/models`);
+    const response = await fetchWithTimeout(`${endpoint}/v1/models`, { timeoutMs: 5_000 });
     const online = response.ok;
     return {
       id: "openai-compatible",

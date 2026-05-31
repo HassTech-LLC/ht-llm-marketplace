@@ -23,7 +23,7 @@ write("nested/deep/model-c.gguf", 200);
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe("discoverGgufModels", () => {
-  const models = discoverGgufModels([{ dir: root, source: "test" }]);
+  const models = discoverGgufModels([{ dir: root, source: "test" }], { skipOllama: true });
 
   it("finds standalone gguf files with absolute paths and sizes", () => {
     const a = models.find((m) => m.name === "model-a");
@@ -53,7 +53,49 @@ describe("discoverGgufModels", () => {
   });
 
   it("respects maxDepth", () => {
-    const shallow = discoverGgufModels([{ dir: root, source: "test" }], { maxDepth: 0 });
+    const shallow = discoverGgufModels([{ dir: root, source: "test" }], { maxDepth: 0, skipOllama: true });
     expect(shallow.some((m) => m.name === "model-c")).toBe(false); // nested/deep is below depth 0
+  });
+
+  it("discovers Ollama models from custom OLLAMA_MODELS environment directory", () => {
+    const customOllamaDir = path.join(root, "custom-ollama");
+    const manifestsDir = path.join(customOllamaDir, "manifests", "registry.ollama.ai", "library", "test-model");
+    const blobsDir = path.join(customOllamaDir, "blobs");
+
+    fs.mkdirSync(manifestsDir, { recursive: true });
+    fs.mkdirSync(blobsDir, { recursive: true });
+
+    // Write a dummy manifest
+    const digest = "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff";
+    const blobName = "sha256-11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff";
+    const manifestContent = JSON.stringify({
+      layers: [
+        {
+          mediaType: "application/vnd.ollama.image.model",
+          digest: digest,
+          size: 1024
+        }
+      ]
+    });
+    fs.writeFileSync(path.join(manifestsDir, "latest"), manifestContent);
+
+    // Write a dummy blob
+    const blobPath = path.join(blobsDir, blobName);
+    fs.writeFileSync(blobPath, "dummy weights content");
+
+    // Set OLLAMA_MODELS and run discovery
+    const originalEnv = process.env.OLLAMA_MODELS;
+    process.env.OLLAMA_MODELS = customOllamaDir;
+
+    try {
+      const discovered = discoverGgufModels([], { skipOllama: false });
+      const foundOllama = discovered.find((m) => m.name === "test-model:latest");
+      expect(foundOllama).toBeDefined();
+      expect(foundOllama!.path).toBe(path.resolve(blobPath));
+      expect(foundOllama!.source).toBe("Ollama");
+      expect(foundOllama!.sizeBytes).toBe(fs.statSync(blobPath).size);
+    } finally {
+      process.env.OLLAMA_MODELS = originalEnv;
+    }
   });
 });

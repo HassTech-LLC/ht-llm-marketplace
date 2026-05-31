@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { RuntimeModel, RuntimeStatus } from "@ht-llm-marketplace/sdk";
+import { fetchWithTimeout } from "../http.js";
 import { runCommand } from "../utils.js";
 
 export interface OllamaAdapterOptions {
@@ -134,10 +135,11 @@ export class OllamaAdapter {
   }
 
   async pull(model: string, onProgress: (event: OllamaPullEvent) => void): Promise<void> {
-    const response = await fetch(`${this.options.host}/api/pull`, {
+    const response = await fetchWithTimeout(`${this.options.host}/api/pull`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, stream: true })
+      body: JSON.stringify({ model, stream: true }),
+      timeoutMs: 30_000
     });
     if (!response.ok || !response.body) {
       throw new Error(`Ollama pull failed with ${response.status}`);
@@ -173,20 +175,23 @@ export class OllamaAdapter {
     });
   }
 
-  async chat(body: unknown) {
-    const response = await fetch(`${this.options.host}/api/chat`, {
+  async chat(body: unknown, options?: { signal?: AbortSignal }) {
+    const response = await fetchWithTimeout(`${this.options.host}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      timeoutMs: 120_000,
+      signal: options?.signal
     });
     if (!response.ok) throw new Error(`Ollama chat failed with ${response.status}`);
     return response;
   }
 
   private async fetchJson<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(`${this.options.host}${path}`, {
+    const response = await fetchWithTimeout(`${this.options.host}${path}`, {
       ...init,
-      headers: { "content-type": "application/json", ...(init.headers || {}) }
+      headers: { "content-type": "application/json", ...(init.headers || {}) },
+      timeoutMs: 8_000
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return (await response.json()) as T;

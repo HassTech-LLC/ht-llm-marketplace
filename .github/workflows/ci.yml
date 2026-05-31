@@ -30,8 +30,26 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Compatibility smoke
+        run: npm run check:compatibility
+
+      - name: Scorecard gate
+        run: npm run scorecard:gate
+
+      - name: Installer smoke
+        run: npm run smoke:installer
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium --with-deps
+
+      - name: Studio proof smoke
+        run: npm run smoke:studio
+
       - name: Verify package contents
         run: npm run pack:dry-run
 
       - name: Smoke packed packages
         run: npm run smoke:packages
+
+      - name: Check generated artifact cleanliness
+        run: npm run check:artifacts

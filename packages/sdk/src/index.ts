@@ -126,10 +126,27 @@ export interface InventoryArtifact {
   owned: boolean;
   runnable: boolean;
   loaded?: boolean;
+  verificationStatus?: ArtifactVerification["status"];
+  verifiedAt?: string;
+  expectedBytes?: number;
+  actualBytes?: number;
+  sourceUrl?: string;
+  etag?: string;
+  lastModified?: string;
   createdAt: string;
   updatedAt: string;
   deleteEligible: boolean;
   notes: string[];
+}
+
+export interface ArtifactVerification {
+  artifactId: string;
+  status: "unverified" | "verified" | "failed" | "source-unverifiable";
+  sha256?: string;
+  expectedBytes?: number;
+  actualBytes?: number;
+  verifiedAt?: string;
+  message?: string;
 }
 
 export interface ResolvedOllamaModel {
@@ -143,10 +160,19 @@ export interface ResolvedOllamaModel {
   downloadUrl: string;
 }
 
+export interface EngineDoctor {
+  engine: { available: boolean; gpu: string | false; loadedModel: string | null; error: string | null };
+  bundledLlamaRelease: string | null;
+  nodeLlamaCppVersion: string | null;
+  latestNodeLlamaCpp: string | null;
+  updateAvailable: boolean;
+  knownUnsupportedArchitectures: Array<{ architecture: string; minRelease: string }>;
+}
+
 export interface DownloadJob {
   id: string;
   type: "ollama-pull" | "hf-file" | "ollama-registry";
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "paused";
   progress: number;
   source: string;
   target: string;
@@ -154,6 +180,7 @@ export interface DownloadJob {
   totalBytes?: number;
   downloadedBytes?: number;
   artifactId?: string;
+  requestPayload?: string;
   startedAt: string;
   updatedAt: string;
 }
@@ -188,6 +215,8 @@ export interface StartDownloadRequest {
   filename?: string;
   filenames?: string[];
   revision?: string;
+  expectedBytes?: number;
+  expectedFiles?: Array<{ path: string; sizeBytes?: number }>;
   /** For the "ollama-registry" source: an Ollama library reference, e.g. "qwen2.5:0.5b". */
   ref?: string;
   displayName?: string;
@@ -215,6 +244,9 @@ export interface EngineLoadRequest {
   path?: string;
   systemPrompt?: string;
   gpuLayers?: number;
+  contextSize?: number;
+  threads?: number;
+  draftModelPath?: string;
 }
 
 export interface DiscoveredModel {
@@ -226,6 +258,170 @@ export interface DiscoveredModel {
   loaded?: boolean;
 }
 
+export interface ModelIndexEntry extends DiscoveredModel {
+  id: string;
+  runnable: boolean;
+  indexedAt: string;
+}
+
+export interface ModelIndexStatus {
+  state: "cold" | "ready" | "refreshing" | "stale";
+  ttlMs: number;
+  modelCount: number;
+  refreshedAt?: string;
+  refreshingSince?: string;
+  lastError?: string;
+}
+
+export interface BenchmarkResult {
+  id: string;
+  model: string;
+  runtime: RuntimeId;
+  prompt: string;
+  firstTokenMs: number;
+  totalMs: number;
+  tokensPerSecond: number;
+  tokenCount: number;
+  ok: boolean;
+  error?: string;
+  createdAt: string;
+}
+
+export interface StandardRouteCandidate {
+  model: ModelIndexEntry;
+  score: number;
+  healthy: boolean;
+  firstTokenMs?: number;
+  totalMs?: number;
+  tokensPerSecond?: number;
+  failureRate: number;
+  reason: string;
+}
+
+export interface StandardRouteDecision {
+  selected: ModelIndexEntry | null;
+  reason: string;
+  candidates: StandardRouteCandidate[];
+}
+
+export interface QueueStatus {
+  running?: QueueEntry;
+  runningItems?: QueueEntry[];
+  queued: QueueEntry[];
+  recent: QueueEntry[];
+}
+
+export interface QueueEntry {
+  id: string;
+  label: string;
+  state: "queued" | "running" | "completed" | "cancelled" | "failed";
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface EngineRuntimeConfig {
+  keepWarm: boolean;
+  unloadAfterIdleMs: number;
+  contextSize: number;
+  gpuLayers: number | "auto";
+  threads: number | "auto";
+  draftModel: string | null;
+  backend: "in-process" | "delegated-server";
+  delegatedServer: {
+    enabled: boolean;
+    port: number;
+    parallel: number;
+    continuousBatching: boolean;
+  };
+}
+
+export interface CompatibilityScorecard {
+  generatedAt: string;
+  claim: "foundation" | "candidate" | "best-replacement";
+  summary: string;
+  evidence: Array<{ id: string; label: string; status: "pass" | "partial" | "planned"; detail: string }>;
+  competitors: Array<{ name: string; parity: "strong" | "partial" | "planned"; covered: string[]; gaps: string[] }>;
+  gates: Array<{ id: string; label: string; status: "pass" | "partial" | "planned" }>;
+}
+
+export interface LocalEmbeddingRequest {
+  model?: string;
+  input: string | string[];
+  encoding_format?: "float" | "base64";
+  dimensions?: number;
+  user?: string;
+}
+
+export interface LocalEmbeddingResponse {
+  object: "list";
+  model: string;
+  data: Array<{ object: "embedding"; index: number; embedding: number[] | string }>;
+  usage: { prompt_tokens: number; total_tokens: number };
+}
+
+export interface LocalDocument {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  chunkCount: number;
+  createdAt: string;
+}
+
+export interface DocumentSearchResult {
+  documentId: string;
+  documentName: string;
+  chunkIndex: number;
+  content: string;
+  score: number;
+  source?: "lexical" | "semantic" | "hybrid";
+}
+
+export interface DocumentAskResponse {
+  answer: string;
+  citations: DocumentSearchResult[];
+}
+
+export interface LocalResponsesRequest {
+  model?: string;
+  input: string | Array<{ role?: string; content?: string | Array<{ type: string; text?: string }> }>;
+  instructions?: string;
+  stream?: boolean;
+  max_output_tokens?: number;
+  temperature?: number;
+  response_format?: unknown;
+  tools?: unknown[];
+  tool_choice?: unknown;
+  store?: boolean;
+  previous_response_id?: string;
+}
+
+export interface LocalResponsesResponse {
+  id: string;
+  object: "response";
+  created_at: number;
+  model: string;
+  status: "completed" | "in_progress" | "failed";
+  output: Array<{
+    id: string;
+    type: "message";
+    status: "completed";
+    role: "assistant";
+    content: Array<{ type: "output_text"; text: string }>;
+  }>;
+  output_text: string;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+}
+
+export interface LlamaServerStatus {
+  available: boolean;
+  running: boolean;
+  endpoint?: string;
+  pid?: number;
+  message: string;
+}
+
 export interface EngineChatRequest {
   runtime: "llamacpp";
   messages: ChatMessage[];
@@ -234,6 +430,10 @@ export interface EngineChatRequest {
   path?: string;
   systemPrompt?: string;
   stream?: boolean;
+  contextSize?: number;
+  threads?: number;
+  maxTokens?: number;
+  temperature?: number;
 }
 
 export interface MarketplaceClientOptions {
@@ -293,6 +493,18 @@ export class MarketplaceClient {
     return this.post<{ job: DownloadJob }>("/api/downloads", request);
   }
 
+  pauseDownload(id: string) {
+    return this.post<{ job: DownloadJob }>(`/api/downloads/${encodeURIComponent(id)}/pause`, {});
+  }
+
+  resumeDownload(id: string) {
+    return this.post<{ job: DownloadJob }>(`/api/downloads/${encodeURIComponent(id)}/resume`, {});
+  }
+
+  cancelDownload(id: string) {
+    return this.post<{ job: DownloadJob }>(`/api/downloads/${encodeURIComponent(id)}/cancel`, {});
+  }
+
   createDeletePlan(request: CreateDeletePlanRequest) {
     return this.post<{ plan: DeletePlan }>("/api/delete-plans", request);
   }
@@ -321,6 +533,19 @@ export class MarketplaceClient {
     return this.get<{ models: DiscoveredModel[] }>("/api/runtimes/llamacpp/models");
   }
 
+  modelIndex() {
+    return this.get<{ index: ModelIndexStatus; models: ModelIndexEntry[] }>("/api/models/index");
+  }
+
+  refreshModelIndex() {
+    return this.post<{ index: ModelIndexStatus; models: ModelIndexEntry[] }>("/api/models/index/refresh", {});
+  }
+
+  /** Engine health: bundled llama.cpp release, version, and update availability. */
+  engineDoctor() {
+    return this.get<EngineDoctor>("/api/engine/doctor");
+  }
+
   loadEngineModel(request: EngineLoadRequest) {
     return this.post<{ ok: boolean; loaded: string; gpu: string | false }>("/api/runtimes/llamacpp/load", request);
   }
@@ -329,15 +554,94 @@ export class MarketplaceClient {
     return this.post<{ ok: boolean; message: string }>("/api/runtimes/llamacpp/unload", {});
   }
 
+  benchmarks() {
+    return this.get<{ benchmarks: BenchmarkResult[] }>("/api/benchmarks");
+  }
+
+  runBenchmark(request: { model?: string; prompt?: string } = {}) {
+    return this.post<{ benchmark: BenchmarkResult }>("/api/benchmarks/run", request);
+  }
+
+  standardRoute() {
+    return this.get<StandardRouteDecision>("/api/routing/standard");
+  }
+
+  queueStatus() {
+    return this.get<QueueStatus>("/api/queue");
+  }
+
+  cancelGeneration(id: string) {
+    return this.post<{ ok: boolean }>(`/api/queue/${encodeURIComponent(id)}/cancel`, {});
+  }
+
+  verifyArtifact(id: string) {
+    return this.post<{ verification: ArtifactVerification }>(`/api/artifacts/${encodeURIComponent(id)}/verify`, {});
+  }
+
+  compatibilityScorecard() {
+    return this.get<CompatibilityScorecard>("/api/compatibility/scorecard");
+  }
+
+  documents() {
+    return this.get<{ documents: LocalDocument[] }>("/api/documents");
+  }
+
+  addDocument(request: { name: string; content: string }) {
+    return this.post<{ document: LocalDocument }>("/api/documents", request);
+  }
+
+  searchDocuments(query: string, limit = 5) {
+    return this.get<{ results: DocumentSearchResult[] }>(
+      `/api/documents/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(limit))}`
+    );
+  }
+
+  askDocument(request: { question: string; documentIds?: string[]; limit?: number; model?: string }) {
+    return this.post<DocumentAskResponse>("/api/documents/ask", request);
+  }
+
+  embeddings(request: LocalEmbeddingRequest) {
+    return this.post<LocalEmbeddingResponse>("/v1/embeddings", request);
+  }
+
+  responses(request: LocalResponsesRequest, options?: { signal?: AbortSignal }) {
+    return this.post<LocalResponsesResponse>("/v1/responses", request, options);
+  }
+
+  getResponse(id: string) {
+    return this.get<LocalResponsesResponse>(`/v1/responses/${encodeURIComponent(id)}`);
+  }
+
+  engineConfig() {
+    return this.get<{ config: EngineRuntimeConfig }>("/api/engine/config");
+  }
+
+  updateEngineConfig(config: Partial<EngineRuntimeConfig>) {
+    return this.put<{ config: EngineRuntimeConfig }>("/api/engine/config", config);
+  }
+
+  engineServerStatus() {
+    return this.get<LlamaServerStatus>("/api/engine/server/status");
+  }
+
+  startEngineServer() {
+    return this.post<LlamaServerStatus>("/api/engine/server/start", {});
+  }
+
+  stopEngineServer() {
+    return this.post<LlamaServerStatus>("/api/engine/server/stop", {});
+  }
+
   /**
    * Chat with the built-in engine (or Ollama). Returns the raw streaming
    * Response so callers can read the NDJSON token stream directly.
    */
-  chat(request: EngineChatRequest | Record<string, unknown>): Promise<Response> {
+  chat(request: EngineChatRequest | Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<Response> {
     return this.fetchImpl(`${this.apiUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(request)
+      body: JSON.stringify(request),
+      signal: options?.signal
     });
   }
 
@@ -350,10 +654,20 @@ export class MarketplaceClient {
     return this.read<T>(response);
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<T> {
     const response = await this.fetchImpl(`${this.apiUrl}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-ht-marketplace-confirm": "privileged-action" },
+      body: JSON.stringify(body),
+      signal: options?.signal
+    });
+    return this.read<T>(response);
+  }
+
+  private async put<T>(path: string, body: unknown): Promise<T> {
+    const response = await this.fetchImpl(`${this.apiUrl}${path}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-ht-marketplace-confirm": "privileged-action" },
       body: JSON.stringify(body)
     });
     return this.read<T>(response);

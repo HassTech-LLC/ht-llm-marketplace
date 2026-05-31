@@ -36,12 +36,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@ht-llm-marketplace/sdk": "0.1.0",
+    "@ht-llm-marketplace/sdk": "0.1.0"
+  },
+  "optionalDependencies": {
     "node-llama-cpp": "^3.18.1"
   }
 }

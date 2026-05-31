@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { compatibilityFromSize, detectFormat, groupMultipartGgufs, matchPattern, parseSplitGgufPath } from "../sources/huggingface.js";
+import {
+  compatibilityFromSize,
+  detectFormat,
+  groupMultipartGgufs,
+  huggingFaceResolveUrl,
+  matchPattern,
+  parseSplitGgufPath,
+  validateHuggingFacePath,
+  validateHuggingFaceRepoId
+} from "../sources/huggingface.js";
 
 describe("huggingface source helpers", () => {
   it("detects runnable GGUF files", () => {
@@ -10,6 +19,16 @@ describe("huggingface source helpers", () => {
   it("matches allow patterns", () => {
     expect(matchPattern("*.gguf", "model.Q4_K_M.gguf")).toBe(true);
     expect(matchPattern("*.gguf", "model.safetensors")).toBe(false);
+  });
+
+  it("validates repo IDs and file paths before building Hugging Face URLs", () => {
+    expect(validateHuggingFaceRepoId("org/model-name.GGUF")).toBe("org/model-name.GGUF");
+    expect(validateHuggingFacePath("Q4_K_M/model file.gguf")).toBe("Q4_K_M/model file.gguf");
+    expect(() => validateHuggingFaceRepoId("../bad/model")).toThrow("Invalid Hugging Face repoId");
+    expect(() => validateHuggingFacePath("../model.gguf")).toThrow("Invalid Hugging Face file path");
+    expect(huggingFaceResolveUrl("org/model", "main", "Q4_K_M/model file.gguf")).toBe(
+      "https://huggingface.co/org/model/resolve/main/Q4_K_M/model%20file.gguf"
+    );
   });
 
   it("scores exact file sizes", () => {

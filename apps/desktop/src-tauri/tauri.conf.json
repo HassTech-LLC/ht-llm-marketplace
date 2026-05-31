@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HT LLM Marketplace",
+  "version": "0.1.0",
+  "identifier": "com.hassantech.llm-marketplace",
+  "build": {
+    "frontendDist": "../../studio/dist",
+    "beforeBuildCommand": "npm run build -w @ht-llm-marketplace/studio"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "HT LLM Marketplace",
+        "width": 1280,
+        "height": 860,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "resources": {
+      "../../../packages/daemon/dist": "daemon",
+      "../../../packages/cli/dist": "cli"
+    }
+  }
+}

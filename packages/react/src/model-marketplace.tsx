@@ -566,7 +566,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     ]);
     setRuntimes(runtimeData.runtimes);
     setInventory(inventoryData.artifacts);
-    setDownloads(downloadData.jobs.filter((job) => job.status === "running" || job.status === "queued"));
+    setDownloads(downloadData.jobs.filter((job) => job.status === "running" || job.status === "queued" || job.status === "paused"));
   }, [client]);
 
   const runSystemScan = useCallback(async (showBusy = true) => {
@@ -647,7 +647,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     const events = client.downloadEvents();
     events.onmessage = (event) => {
       const jobs = JSON.parse(event.data) as DownloadJob[];
-      setDownloads(jobs.filter((job) => job.status === "running" || job.status === "queued"));
+      setDownloads(jobs.filter((job) => job.status === "running" || job.status === "queued" || job.status === "paused"));
       // Progress ticks arrive continuously during a download. Only do a full
       // inventory/runtime refresh when a job actually completes (the owned set
       // changed), never on every tick — otherwise this fans out into a request storm.
@@ -726,12 +726,17 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     const isOllamaOnline = runtimes.find((r) => r.id === "ollama")?.online;
     const targetRuntime = isOllamaOnline ? "ollama" : "llamacpp";
     const filenames = file.parts?.map((part) => part.path) || [file.path];
+    const expectedFiles = file.parts?.map((part) => ({ path: part.path, sizeBytes: part.sizeBytes })) || [
+      { path: file.path, sizeBytes: file.sizeBytes }
+    ];
     const result = await client.startDownload({
       source: "huggingface",
       runtime: targetRuntime,
       repoId: file.repoId,
       filename: filenames[0],
       filenames,
+      expectedBytes: file.sizeBytes,
+      expectedFiles,
       displayName: file.path.split("/").pop()
     });
     setDownloads((current) => [result.job, ...current]);
@@ -747,7 +752,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     try {
       const res = await fetch(`${currentApiUrl}/api/runtimes/install`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-ht-marketplace-confirm": "privileged-action" },
         body: JSON.stringify({ runtime })
       });
       const data = await res.json();
@@ -766,7 +771,8 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     setMessage("");
     try {
       const res = await fetch(`${currentApiUrl}/api/runtimes/ollama/server/start`, {
-        method: "POST"
+        method: "POST",
+        headers: { "x-ht-marketplace-confirm": "privileged-action" }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to start service");
@@ -805,6 +811,33 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     const result = await client.confirmDeletePlan(deletePlan.id);
     setDeletePlan(result.plan);
     await refresh();
+  }
+
+  async function pauseDownload(id: string) {
+    try {
+      await client.pauseDownload(id);
+      await refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    }
+  }
+
+  async function resumeDownload(id: string) {
+    try {
+      await client.resumeDownload(id);
+      await refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    }
+  }
+
+  async function cancelDownload(id: string) {
+    try {
+      await client.cancelDownload(id);
+      await refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    }
   }
 
   function changeView(nextView: MarketplaceView) {
@@ -1277,13 +1310,53 @@ You are a helpful, precision-aligned local assistant.
           <section className="ht-section">
             {downloads.length === 0 ? <Empty text={marketplaceConfig.labels.empty.noDownloads} /> : null}
             {downloads.map((job) => (
-              <div className="ht-download" key={job.id}>
-                <div>
-                  <strong>{job.target}</strong>
-                  <span>{job.message}</span>
+              <div className="ht-download" key={job.id} style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'stretch' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <strong style={{ fontSize: '14px', color: 'var(--ht-text)' }}>{job.target}</strong>
+                    <span style={{ fontSize: '11px', color: 'var(--ht-muted)' }}>{job.message}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <span className={`ht-pill ${job.status === 'running' ? 'is-online' : ''}`} style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                      {job.status}
+                    </span>
+                    {job.status === "running" && (
+                      <button 
+                        type="button" 
+                        onClick={() => void pauseDownload(job.id)}
+                        className="ht-action-btn ht-primary-outline"
+                        style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        ⏸️ Pause
+                      </button>
+                    )}
+                    {job.status === "paused" && (
+                      <button 
+                        type="button" 
+                        onClick={() => void resumeDownload(job.id)}
+                        className="ht-action-btn"
+                        style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', background: 'linear-gradient(135deg, var(--ht-cyan), var(--ht-blue))', border: 'none', color: 'white', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', borderRadius: '8px' }}
+                      >
+                        ▶️ Resume
+                      </button>
+                    )}
+                    {(job.status === "running" || job.status === "paused" || job.status === "queued") && (
+                      <button 
+                        type="button" 
+                        onClick={() => void cancelDownload(job.id)}
+                        className="ht-action-btn ht-danger"
+                        style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', color: 'white', border: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', borderRadius: '8px' }}
+                      >
+                        ⏹️ Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <progress value={job.progress} max={100} />
-                <small>{job.progress}% {job.downloadedBytes ? `- ${bytes(job.downloadedBytes)} / ${bytes(job.totalBytes)}` : ""}</small>
+                <progress value={job.progress} max={100} style={{ width: '100%', height: '8px', borderRadius: '4px' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <small style={{ color: 'var(--ht-muted)', fontSize: '11px' }}>{job.progress}% {job.downloadedBytes ? `- ${bytes(job.downloadedBytes)} / ${bytes(job.totalBytes)}` : ""}</small>
+                  <small style={{ color: 'var(--ht-muted)', fontSize: '10px', opacity: 0.7 }}>ID: {job.id}</small>
+                </div>
               </div>
             ))}
           </section>

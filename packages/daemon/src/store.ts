@@ -2,7 +2,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { DeletePlan, DownloadJob, InventoryArtifact, RuntimeId } from "@ht-llm-marketplace/sdk";
+import type {
+  ArtifactVerification,
+  BenchmarkResult,
+  CompatibilityScorecard,
+  DeletePlan,
+  DocumentSearchResult,
+  DownloadJob,
+  EngineRuntimeConfig,
+  InventoryArtifact,
+  LocalDocument,
+  LocalResponsesResponse,
+  RuntimeId
+} from "@ht-llm-marketplace/sdk";
+import { chunkText, lexicalScore } from "./documents/local-rag.js";
+import type { DocumentChunk, StoredDocumentEmbedding } from "./documents/vector-store.js";
+import { defaultRuntimeConfig, sanitizeRuntimeConfig } from "./runtime/config.js";
 
 export interface ArtifactInput {
   id?: string;
@@ -16,6 +31,13 @@ export interface ArtifactInput {
   path?: string;
   sizeBytes?: number;
   sha256?: string;
+  verificationStatus?: ArtifactVerification["status"];
+  verifiedAt?: string;
+  expectedBytes?: number;
+  actualBytes?: number;
+  sourceUrl?: string;
+  etag?: string;
+  lastModified?: string;
   owned: boolean;
   runnable: boolean;
   loaded?: boolean;
@@ -46,9 +68,9 @@ export class MarketplaceStore {
     this.db
       .prepare(
         `INSERT INTO artifacts
-          (id, source, runtime, name, display_name, repo_id, filename, revision, path, size_bytes, sha256, owned, runnable, loaded, notes, created_at, updated_at)
+          (id, source, runtime, name, display_name, repo_id, filename, revision, path, size_bytes, sha256, verification_status, verified_at, expected_bytes, actual_bytes, source_url, etag, last_modified, owned, runnable, loaded, notes, created_at, updated_at)
         VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           source=excluded.source,
           runtime=excluded.runtime,
@@ -60,6 +82,13 @@ export class MarketplaceStore {
           path=excluded.path,
           size_bytes=excluded.size_bytes,
           sha256=excluded.sha256,
+          verification_status=excluded.verification_status,
+          verified_at=excluded.verified_at,
+          expected_bytes=excluded.expected_bytes,
+          actual_bytes=excluded.actual_bytes,
+          source_url=excluded.source_url,
+          etag=excluded.etag,
+          last_modified=excluded.last_modified,
           owned=excluded.owned,
           runnable=excluded.runnable,
           loaded=excluded.loaded,
@@ -78,6 +107,13 @@ export class MarketplaceStore {
         input.path || null,
         input.sizeBytes || null,
         input.sha256 || null,
+        input.verificationStatus || "unverified",
+        input.verifiedAt || null,
+        input.expectedBytes || null,
+        input.actualBytes || input.sizeBytes || null,
+        input.sourceUrl || null,
+        input.etag || null,
+        input.lastModified || null,
         input.owned ? 1 : 0,
         input.runnable ? 1 : 0,
         input.loaded ? 1 : 0,
@@ -103,6 +139,25 @@ export class MarketplaceStore {
       .map((row) => mapArtifact(row as Row));
   }
 
+  setArtifactVerification(input: ArtifactVerification): ArtifactVerification {
+    this.db
+      .prepare(
+        `UPDATE artifacts
+         SET verification_status = ?, verified_at = ?, sha256 = COALESCE(?, sha256), expected_bytes = COALESCE(?, expected_bytes), actual_bytes = COALESCE(?, actual_bytes), updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.status,
+        input.verifiedAt || new Date().toISOString(),
+        input.sha256 || null,
+        input.expectedBytes || null,
+        input.actualBytes || null,
+        new Date().toISOString(),
+        input.artifactId
+      );
+    return input;
+  }
+
   deleteArtifact(id: string) {
     this.db.prepare("DELETE FROM artifacts WHERE id = ?").run(id);
   }
@@ -111,8 +166,8 @@ export class MarketplaceStore {
     this.db
       .prepare(
         `INSERT INTO jobs
-          (id, type, status, progress, source, target, message, total_bytes, downloaded_bytes, artifact_id, started_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, type, status, progress, source, target, message, total_bytes, downloaded_bytes, artifact_id, started_at, updated_at, request_payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           status=excluded.status,
           progress=excluded.progress,
@@ -122,7 +177,8 @@ export class MarketplaceStore {
           total_bytes=excluded.total_bytes,
           downloaded_bytes=excluded.downloaded_bytes,
           artifact_id=excluded.artifact_id,
-          updated_at=excluded.updated_at`
+          updated_at=excluded.updated_at,
+          request_payload=excluded.request_payload`
       )
       .run(
         job.id,
@@ -136,7 +192,8 @@ export class MarketplaceStore {
         job.downloadedBytes || null,
         job.artifactId || null,
         job.startedAt,
-        job.updatedAt
+        job.updatedAt,
+        job.requestPayload || null
       );
     return job;
   }
@@ -190,6 +247,213 @@ export class MarketplaceStore {
       });
   }
 
+  addBenchmark(input: BenchmarkResult): BenchmarkResult {
+    this.db
+      .prepare(
+        `INSERT INTO benchmarks
+          (id, model, runtime, prompt, first_token_ms, total_ms, tokens_per_second, token_count, ok, error, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.id,
+        input.model,
+        input.runtime,
+        input.prompt,
+        input.firstTokenMs,
+        input.totalMs,
+        input.tokensPerSecond,
+        input.tokenCount,
+        input.ok ? 1 : 0,
+        input.error || null,
+        input.createdAt
+      );
+    return input;
+  }
+
+  listBenchmarks(limit = 100): BenchmarkResult[] {
+    return this.db
+      .prepare("SELECT * FROM benchmarks ORDER BY created_at DESC LIMIT ?")
+      .all(limit)
+      .map((row) => mapBenchmark(row as Row));
+  }
+
+  addDocument(input: { name: string; content: string }): LocalDocument {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    const content = input.content.trim();
+    const chunks = chunkText(content).map((chunk) => ({ ...chunk, documentId: id }));
+    this.db.prepare("INSERT INTO documents (id, name, size_bytes, created_at) VALUES (?, ?, ?, ?)").run(
+      id,
+      input.name,
+      Buffer.byteLength(content, "utf8"),
+      now
+    );
+    const insert = this.db.prepare("INSERT INTO document_chunks (document_id, chunk_index, content) VALUES (?, ?, ?)");
+    for (const chunk of chunks) {
+      insert.run(id, chunk.index, chunk.content);
+    }
+    return { id, name: input.name, sizeBytes: Buffer.byteLength(content, "utf8"), chunkCount: chunks.length, createdAt: now };
+  }
+
+  listDocuments(): LocalDocument[] {
+    return this.db
+      .prepare(
+        `SELECT d.id, d.name, d.size_bytes, d.created_at, COUNT(c.chunk_index) AS chunk_count
+         FROM documents d
+         LEFT JOIN document_chunks c ON c.document_id = d.id
+         GROUP BY d.id
+         ORDER BY d.created_at DESC`
+      )
+      .all()
+      .map((row) => mapDocument(row as Row));
+  }
+
+  searchDocuments(query: string, limit = 5): DocumentSearchResult[] {
+    const term = `%${query.toLowerCase().replace(/[%_]/g, "")}%`;
+    return this.db
+      .prepare(
+        `SELECT d.id AS document_id, d.name AS document_name, c.chunk_index, c.content
+         FROM document_chunks c
+         JOIN documents d ON d.id = c.document_id
+         WHERE lower(c.content) LIKE ?
+         LIMIT ?`
+      )
+      .all(term, limit * 4)
+      .map((row) => {
+        const item = row as Row;
+        return {
+          documentId: String(item.document_id),
+          documentName: String(item.document_name),
+          chunkIndex: Number(item.chunk_index),
+          content: String(item.content),
+          score: lexicalScore(query, String(item.content)),
+          source: "lexical" as const
+        };
+      })
+      .filter((result) => result.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
+  listDocumentChunks(documentId: string): DocumentChunk[] {
+    return this.db
+      .prepare(
+        `SELECT d.id AS document_id, d.name AS document_name, c.chunk_index, c.content
+         FROM document_chunks c
+         JOIN documents d ON d.id = c.document_id
+         WHERE d.id = ?
+         ORDER BY c.chunk_index`
+      )
+      .all(documentId)
+      .map((row) => mapDocumentChunk(row as Row));
+  }
+
+  addDocumentEmbedding(input: {
+    documentId: string;
+    chunkIndex: number;
+    model: string;
+    dimensions: number;
+    vector: number[];
+    createdAt?: string;
+  }) {
+    this.db
+      .prepare(
+        `INSERT INTO document_embeddings
+          (document_id, chunk_index, model, dimensions, vector_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(document_id, chunk_index, model) DO UPDATE SET
+           dimensions=excluded.dimensions,
+           vector_json=excluded.vector_json,
+           created_at=excluded.created_at`
+      )
+      .run(
+        input.documentId,
+        input.chunkIndex,
+        input.model,
+        input.dimensions,
+        JSON.stringify(input.vector),
+        input.createdAt || new Date().toISOString()
+      );
+  }
+
+  listDocumentEmbeddings(model: string): StoredDocumentEmbedding[] {
+    return this.db
+      .prepare(
+        `SELECT d.id AS document_id, d.name AS document_name, c.chunk_index, c.content, e.model, e.dimensions, e.vector_json
+         FROM document_embeddings e
+         JOIN document_chunks c ON c.document_id = e.document_id AND c.chunk_index = e.chunk_index
+         JOIN documents d ON d.id = c.document_id
+         WHERE e.model = ?
+         ORDER BY d.created_at DESC, c.chunk_index ASC`
+      )
+      .all(model)
+      .map((row) => {
+        const item = row as Row;
+        return {
+          ...mapDocumentChunk(item),
+          model: String(item.model),
+          dimensions: Number(item.dimensions),
+          vector: parseVectorJson(item.vector_json)
+        };
+      })
+      .filter((item) => item.vector.length > 0);
+  }
+
+  addResponse(input: { id: string; model: string; request: unknown; response: LocalResponsesResponse; createdAt?: string }): LocalResponsesResponse {
+    this.db
+      .prepare(
+        `INSERT INTO responses (id, model, request_json, response_json, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           model=excluded.model,
+           request_json=excluded.request_json,
+           response_json=excluded.response_json`
+      )
+      .run(input.id, input.model, JSON.stringify(input.request), JSON.stringify(input.response), input.createdAt || new Date().toISOString());
+    return input.response;
+  }
+
+  getResponse(id: string): LocalResponsesResponse | undefined {
+    const row = this.db.prepare("SELECT response_json FROM responses WHERE id = ?").get(id) as { response_json?: string } | undefined;
+    return row?.response_json ? (JSON.parse(row.response_json) as LocalResponsesResponse) : undefined;
+  }
+
+  getRuntimeConfig(): EngineRuntimeConfig {
+    const row = this.db.prepare("SELECT config_json FROM runtime_config WHERE id = 'default'").get() as { config_json?: string } | undefined;
+    if (!row?.config_json) return defaultRuntimeConfig();
+    try {
+      return sanitizeRuntimeConfig(JSON.parse(row.config_json));
+    } catch {
+      return defaultRuntimeConfig();
+    }
+  }
+
+  setRuntimeConfig(config: EngineRuntimeConfig): EngineRuntimeConfig {
+    const sanitized = sanitizeRuntimeConfig(config);
+    this.db
+      .prepare(
+        `INSERT INTO runtime_config (id, config_json, updated_at)
+         VALUES ('default', ?, ?)
+         ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at`
+      )
+      .run(JSON.stringify(sanitized), new Date().toISOString());
+    return sanitized;
+  }
+
+  addCompatibilityRun(input: CompatibilityScorecard): CompatibilityScorecard {
+    this.db
+      .prepare("INSERT INTO compatibility_runs (id, result_json, created_at) VALUES (?, ?, ?)")
+      .run(randomUUID(), JSON.stringify(input), input.generatedAt);
+    return input;
+  }
+
+  latestCompatibilityRun(): CompatibilityScorecard | undefined {
+    const row = this.db
+      .prepare("SELECT result_json FROM compatibility_runs ORDER BY created_at DESC LIMIT 1")
+      .get() as { result_json?: string } | undefined;
+    return row?.result_json ? (JSON.parse(row.result_json) as CompatibilityScorecard) : undefined;
+  }
+
   private migrate() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS artifacts (
@@ -204,6 +468,13 @@ export class MarketplaceStore {
         path TEXT,
         size_bytes INTEGER,
         sha256 TEXT,
+        verification_status TEXT NOT NULL DEFAULT 'unverified',
+        verified_at TEXT,
+        expected_bytes INTEGER,
+        actual_bytes INTEGER,
+        source_url TEXT,
+        etag TEXT,
+        last_modified TEXT,
         owned INTEGER NOT NULL DEFAULT 0,
         runnable INTEGER NOT NULL DEFAULT 0,
         loaded INTEGER NOT NULL DEFAULT 0,
@@ -224,7 +495,8 @@ export class MarketplaceStore {
         downloaded_bytes INTEGER,
         artifact_id TEXT,
         started_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        request_payload TEXT
       );
 
       CREATE TABLE IF NOT EXISTS delete_plans (
@@ -244,7 +516,88 @@ export class MarketplaceStore {
         details TEXT,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS benchmarks (
+        id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        runtime TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        first_token_ms REAL NOT NULL,
+        total_ms REAL NOT NULL,
+        tokens_per_second REAL NOT NULL,
+        token_count INTEGER NOT NULL,
+        ok INTEGER NOT NULL,
+        error TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS document_chunks (
+        document_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        PRIMARY KEY (document_id, chunk_index),
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS document_embeddings (
+        document_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER NOT NULL,
+        vector_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (document_id, chunk_index, model),
+        FOREIGN KEY (document_id, chunk_index) REFERENCES document_chunks(document_id, chunk_index) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS responses (
+        id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS runtime_config (
+        id TEXT PRIMARY KEY,
+        config_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS compatibility_runs (
+        id TEXT PRIMARY KEY,
+        result_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
     `);
+
+    try {
+      this.db.exec("ALTER TABLE jobs ADD COLUMN request_payload TEXT");
+    } catch {
+      // Ignored if column already exists
+    }
+    for (const statement of [
+      "ALTER TABLE artifacts ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified'",
+      "ALTER TABLE artifacts ADD COLUMN verified_at TEXT",
+      "ALTER TABLE artifacts ADD COLUMN expected_bytes INTEGER",
+      "ALTER TABLE artifacts ADD COLUMN actual_bytes INTEGER",
+      "ALTER TABLE artifacts ADD COLUMN source_url TEXT",
+      "ALTER TABLE artifacts ADD COLUMN etag TEXT",
+      "ALTER TABLE artifacts ADD COLUMN last_modified TEXT"
+    ]) {
+      try {
+        this.db.exec(statement);
+      } catch {
+        // Ignored if column already exists
+      }
+    }
   }
 }
 
@@ -264,6 +617,13 @@ function mapArtifact(row: Row): InventoryArtifact {
     path: nullableString(row.path),
     sizeBytes: nullableNumber(row.size_bytes),
     sha256: nullableString(row.sha256),
+    verificationStatus: (nullableString(row.verification_status) || "unverified") as ArtifactVerification["status"],
+    verifiedAt: nullableString(row.verified_at),
+    expectedBytes: nullableNumber(row.expected_bytes),
+    actualBytes: nullableNumber(row.actual_bytes),
+    sourceUrl: nullableString(row.source_url),
+    etag: nullableString(row.etag),
+    lastModified: nullableString(row.last_modified),
     owned,
     runnable: Number(row.runnable) === 1,
     loaded: Number(row.loaded) === 1,
@@ -272,6 +632,51 @@ function mapArtifact(row: Row): InventoryArtifact {
     updatedAt: String(row.updated_at),
     deleteEligible: owned,
   };
+}
+
+function mapBenchmark(row: Row): BenchmarkResult {
+  return {
+    id: String(row.id),
+    model: String(row.model),
+    runtime: row.runtime as RuntimeId,
+    prompt: String(row.prompt),
+    firstTokenMs: Number(row.first_token_ms),
+    totalMs: Number(row.total_ms),
+    tokensPerSecond: Number(row.tokens_per_second),
+    tokenCount: Number(row.token_count),
+    ok: Number(row.ok) === 1,
+    error: nullableString(row.error),
+    createdAt: String(row.created_at)
+  };
+}
+
+function mapDocument(row: Row): LocalDocument {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    sizeBytes: Number(row.size_bytes),
+    chunkCount: Number(row.chunk_count || 0),
+    createdAt: String(row.created_at)
+  };
+}
+
+function mapDocumentChunk(row: Row): DocumentChunk {
+  return {
+    documentId: String(row.document_id),
+    documentName: String(row.document_name),
+    chunkIndex: Number(row.chunk_index),
+    content: String(row.content)
+  };
+}
+
+function parseVectorJson(value: unknown): number[] {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry));
+  } catch {
+    return [];
+  }
 }
 
 function mapJob(row: Row): DownloadJob {
@@ -286,6 +691,7 @@ function mapJob(row: Row): DownloadJob {
     totalBytes: nullableNumber(row.total_bytes),
     downloadedBytes: nullableNumber(row.downloaded_bytes),
     artifactId: nullableString(row.artifact_id),
+    requestPayload: nullableString(row.request_payload),
     startedAt: String(row.started_at),
     updatedAt: String(row.updated_at)
   };
