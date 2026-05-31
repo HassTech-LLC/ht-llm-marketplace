@@ -74,16 +74,17 @@ daemon.stderr.on("data", (chunk) => {
 try {
   await waitForHealth(`http://127.0.0.1:${port}/health`);
 } finally {
-  daemon.kill();
+  await stopDaemon(daemon);
 }
 
 console.log(`package smoke ok: installed ${tarballs.length} tarballs and started daemon on ${port}`);
+cleanupSmokeRoot();
 
-function run(command, args, cwd) {
+function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
-    shell: false
+    shell: options.shell ?? false
   });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with ${result.status}: ${result.error?.message || "no error detail"}`);
@@ -91,15 +92,15 @@ function run(command, args, cwd) {
 }
 
 function runNpm(args, cwd) {
-  run(npm.command, [...npm.args, ...args], cwd);
+  run(npm.command, [...npm.args, ...args], cwd, { shell: npm.shell });
 }
 
 function npmInvocation() {
   if (process.env.npm_execpath && fs.existsSync(process.env.npm_execpath)) {
-    return { command: process.execPath, args: [process.env.npm_execpath] };
+    return { command: process.execPath, args: [process.env.npm_execpath], shell: false };
   }
   if (process.platform !== "win32") {
-    return { command: "npm", args: [] };
+    return { command: "npm", args: [], shell: false };
   }
 
   const pathEntries = (process.env.Path || process.env.PATH || "").split(path.delimiter).filter(Boolean);
@@ -111,17 +112,39 @@ function npmInvocation() {
     if (!match) continue;
     const cli = path.resolve(entry, match[1]);
     if (fs.existsSync(cli)) {
-      return { command: process.execPath, args: [cli] };
+      // Found the underlying npm-cli.js — invoke node directly, no shell needed.
+      return { command: process.execPath, args: [cli], shell: false };
     }
   }
 
-  return { command: "npm", args: [] };
+  // Fallback to npm.cmd; Node ≥18.20.2 (CVE-2024-27980) requires shell:true for .cmd on Windows.
+  return { command: "npm", args: [], shell: true };
 }
 
 function assertInsideWorkspace(target) {
   const relative = path.relative(root, target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`Refusing to clear path outside workspace: ${target}`);
+  }
+}
+
+function cleanupSmokeRoot() {
+  assertInsideWorkspace(smokeRoot);
+  fs.rmSync(smokeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+  const artifactsDir = path.dirname(smokeRoot);
+  if (path.basename(artifactsDir) === "artifacts" && fs.existsSync(artifactsDir) && fs.readdirSync(artifactsDir).length === 0) {
+    fs.rmdirSync(artifactsDir);
+  }
+}
+
+async function stopDaemon(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill();
+  await Promise.race([exited, delay(3000)]);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await Promise.race([exited, delay(3000)]);
   }
 }
 
