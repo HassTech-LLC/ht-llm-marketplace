@@ -10,14 +10,14 @@ HT Studio can beat Ollama and LM Studio, but not by pretending a wrapper around 
 - Use benchmark-driven routing instead of a fixed model list.
 - Use delegated llama-server for batching, slots, embeddings, and OpenAI-compatible endpoints.
 - Add optional high-throughput engines for machines that can use them.
-- Make model discovery, download, verification, deletion, API compatibility, RAG, and embedding into first-class proof-backed features.
+- Make model discovery, download, verification, deletion, API compatibility, routing, and embeddings into first-class runner features.
 - Keep all heavy engines optional so the default install stays light.
 
-The current repo already has the right foundation: daemon, Studio, SDK, Web Component, CLI, Ollama/LM Studio/llama.cpp/OpenAI-compatible adapters, model index, benchmarks, queue, Responses route, embeddings route, document search, Tauri scaffold, scorecard, and smoke gates. The remaining work is to replace partial proof paths with real runtime proof and make the standard chat path use those decisions.
+The current repo already has the right foundation: daemon, Studio, SDK, Web Component, CLI, Ollama/LM Studio/llama.cpp/OpenAI-compatible adapters, model index, benchmarks, queue, Responses route, embeddings route, Tauri scaffold, and smoke gates. The remaining work is to make the standard chat path use benchmark routing decisions and finish delegated server execution.
 
 ## Current Repo Truth
 
-Current claim should stay `foundation` until evidence says otherwise. Existing docs already enforce this policy in `docs/replacement-readiness.md` and `docs/absolute-peak-readiness.md`.
+Current readiness should stay grounded in `docs/replacement-readiness.md`.
 
 Observed implementation strengths:
 
@@ -25,7 +25,7 @@ Observed implementation strengths:
 - Direct GGUF runtime through `node-llama-cpp`.
 - Adapters for Ollama, LM Studio, llama.cpp, and generic OpenAI-compatible endpoints.
 - Benchmark storage and `/api/routing/standard` decision logic.
-- Optional local embeddings and document chat scaffolding.
+- Optional local embeddings for API parity.
 - OpenAI-compatible `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` surfaces.
 - Delegated `llama-server` manager scaffold with binary discovery, start, stop, and status.
 - Windows desktop/Tauri scaffold and package smoke scripts.
@@ -34,7 +34,7 @@ Current blockers:
 
 - `apps/studio/src/RunConsole.tsx` still chooses its default standard path from a hard-coded Ollama preference list instead of the daemon's benchmark route.
 - Delegated `llama-server` is status/start capable, but chat proxying through that server is still blocked in `packages/daemon/src/server.ts`.
-- Scorecard gates are useful, but claim promotion still needs complete evidence from benchmark, Docker, installer, API, RAG, and Studio smokes.
+- Release gates are useful, but readiness still needs complete benchmark, Docker, installer, API, and Studio smoke coverage.
 - The default in-process engine can only serve one generation at a time; real multi-request throughput needs delegated `llama-server`, vLLM, or SGLang.
 
 ## Best Engine Strategy
@@ -111,7 +111,7 @@ Use it for:
 
 ### 7. Desktop Product Reference: Jan
 
-Jan is Apache-2.0 and worth studying for packaging, desktop architecture, and offline user experience. Do not copy its whole app into HT Studio; HT Studio's differentiator should remain local runtime proof plus embeddability.
+Jan is Apache-2.0 and worth studying for packaging, desktop architecture, and offline user experience. Do not copy its whole app into HT Studio; HT Studio's differentiator should remain local runtime control plus embeddability.
 
 ### Avoid As Core Dependencies
 
@@ -139,8 +139,6 @@ Do not treat all "open-weight" models as non-restrictive. Llama, Gemma, some Mis
 - Benchmark-driven standard routing instead of manual guesswork.
 - OpenAI-compatible `/v1` plus Ollama-compatible routes in one daemon.
 - Embeddable Web Component and SDK for any app.
-- Local documents/RAG and citations in the same workspace.
-- Proof dashboard that explains why a claim is true on the current machine.
 
 ## How HT Studio Beats LM Studio
 
@@ -149,7 +147,7 @@ Do not treat all "open-weight" models as non-restrictive. Llama, Gemma, some Mis
 - Scriptable runtime management and compatibility smokes.
 - Clear local deletion and storage ownership.
 - Optional engines beyond LM Studio's bundled runtime path.
-- Evidence-gated "best replacement" claim instead of marketing language.
+- Benchmark-backed replacement claims instead of marketing language.
 
 ## Implementation Roadmap
 
@@ -183,12 +181,12 @@ Do not treat all "open-weight" models as non-restrictive. Llama, Gemma, some Mis
 - Prefer Qwen/Mistral/Phi permissive models for defaults.
 - Recommend quant by actual VRAM/RAM and benchmark history, not only file size.
 
-### Phase 5: Distribution Proof
+### Phase 5: Distribution Readiness
 
 - Build real Windows installer and tray daemon lifecycle.
 - Make Docker smoke required for release claims on machines with Docker.
-- Add one-command `htlm doctor --proof`.
-- Keep `best-replacement` locked until every gate passes on the target machine.
+- Add one-command `htlm doctor`.
+- Keep replacement claims tied to passing checks on the target machine.
 
 ## Practical Ranking
 
@@ -200,7 +198,7 @@ Best near-term path:
 4. MLC/WebLLM for future embeddable/browser/mobile runtime.
 5. LocalAI as optional multimodal compatibility backend.
 
-The fastest way to a credible win is not more UI. It is benchmark-backed standard routing plus real delegated llama-server continuous batching, then proof that the same Studio works as a desktop app, daemon, CLI, SDK, and embeddable widget.
+The fastest way to a credible win is not more UI. It is benchmark-backed standard routing plus real delegated llama-server continuous batching across the desktop app, daemon, CLI, SDK, and embeddable widget.
 
 ## Sources Checked
 

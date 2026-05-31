@@ -1,11 +1,14 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 
-const apiUrl = process.env.HT_STUDIO_API_URL || "http://127.0.0.1:3001";
-const studioUrl = process.env.HT_STUDIO_URL || "http://127.0.0.1:3000";
 const attachOnly = process.env.HT_STUDIO_ATTACH_ONLY === "1";
+const apiPort = process.env.HT_STUDIO_API_PORT || (!attachOnly ? String(await freePort()) : "3001");
+const studioPort = process.env.HT_STUDIO_PORT || (!attachOnly ? String(await freePort()) : "3000");
+const apiUrl = process.env.HT_STUDIO_API_URL || `http://127.0.0.1:${apiPort}`;
+const studioUrl = process.env.HT_STUDIO_URL || `http://127.0.0.1:${studioPort}`;
 const children = [];
 const childOutput = new Map();
 
@@ -19,10 +22,10 @@ try {
     await page.goto(studioUrl, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Marketplace" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "HT Studio" }).click();
-    await page.getByText("Run a Model").waitFor({ timeout: 10_000 });
-    const body = await page.textContent("body");
-    if (body?.includes("Documents") || body?.includes("Readiness Dashboard")) {
-      throw new Error("Removed Documents/Proof surfaces are still visible.");
+    await page.getByRole("heading", { name: "HT Studio" }).waitFor({ timeout: 10_000 });
+    const tabs = await page.locator(".studio-tabbar button").allTextContents();
+    if (tabs.length !== 2 || tabs[0] !== "Marketplace" || tabs[1] !== "HT Studio") {
+      throw new Error(`Unexpected Studio tabs: ${tabs.join(", ")}`);
     }
   } finally {
     await browser.close();
@@ -36,17 +39,33 @@ async function startLocalStack() {
   if (!fs.existsSync("packages/daemon/dist/index.js")) {
     throw new Error("Daemon dist entry is missing. Run npm run build before studio smoke.");
   }
+  const api = new URL(apiUrl);
+  const studio = new URL(studioUrl);
   children.push(spawnLogged("daemon", process.execPath, ["packages/daemon/dist/index.js"], {
-    env: { ...process.env, HT_MARKETPLACE_PORT: "3001", HT_MARKETPLACE_HOST: "127.0.0.1" },
+    env: { ...process.env, HT_MARKETPLACE_PORT: api.port, HT_MARKETPLACE_HOST: api.hostname },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   }));
   const viteBin = path.resolve("node_modules", "vite", "bin", "vite.js");
-  children.push(spawnLogged("studio", process.execPath, [viteBin, "--host", "127.0.0.1", "--port", "3000", "--strictPort"], {
+  children.push(spawnLogged("studio", process.execPath, [viteBin, "--host", studio.hostname, "--port", studio.port, "--strictPort"], {
     cwd: path.resolve("apps", "studio"),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   }));
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => {
+        if (address && typeof address === "object") resolve(address.port);
+        else reject(new Error("Unable to allocate free port"));
+      });
+    });
+  });
 }
 
 async function waitFor(url, json = true) {

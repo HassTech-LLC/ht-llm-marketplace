@@ -444,6 +444,56 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(res.body).toContain("Ollama response");
   });
 
+  it("POST /api/chat proxies delegated llama-server streams as Ollama NDJSON", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+      keepWarm: true,
+      unloadAfterIdleMs: 900000,
+      contextSize: 4096,
+      gpuLayers: "auto",
+      threads: "auto",
+      backend: "delegated-server",
+      draftModel: null,
+      delegatedServer: { enabled: true, port: 8080, parallel: 4, continuousBatching: true }
+    });
+    mockContext.llamaServer.status = vi.fn().mockReturnValue({
+      available: true,
+      running: true,
+      endpoint: "http://127.0.0.1:8080",
+      message: "running"
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        messages: [{ role: "user", content: "Hello there" }],
+        stream: true
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(res.body).toContain('"content":"hi"');
+      expect(res.body).toContain('"done":true');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("POST /api/chat auto-routes virtual Ternary SSM Specialist model correctly", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);

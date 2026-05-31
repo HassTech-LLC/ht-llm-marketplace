@@ -6,7 +6,8 @@ import {
   type EngineRuntimeConfig,
   type LlamaServerStatus,
   type QueueStatus,
-  type RuntimeModel
+  type RuntimeModel,
+  type StandardRouteDecision
 } from "@ht-llm-marketplace/sdk";
 
 const CopyIcon = () => (
@@ -77,13 +78,6 @@ const client = new MarketplaceClient({ apiUrl: "http://127.0.0.1:3001" });
 const FAILED_KEY = "htlm:failedModels";
 const STANDARD_KEEP_ALIVE = "30m";
 const STANDARD_CONTEXT = 512;
-const FAST_STANDARD_MODELS = [
-  "llama3.2:1b",
-  "Llama-3.2-1B-Instruct-Q4_K_M:latest",
-  "Llama-3.2-1B-Instruct-Q4_K_M",
-  "qwen2.5:0.5b",
-  "qwen2.5:0.5b-instruct"
-];
 
 export interface PendingLoad {
   artifactId?: string;
@@ -133,30 +127,13 @@ function readFailed(): string[] {
   }
 }
 
-function pickStandardModel(models: RuntimeModel[] = []): RuntimeModel | undefined {
-  const byName = new Map(models.map((model) => [model.name.toLowerCase(), model]));
-  for (const name of FAST_STANDARD_MODELS) {
-    const match = byName.get(name.toLowerCase());
-    if (match) return match;
-  }
-
-  return models
-    .filter((model) => {
-      const name = `${model.name} ${model.family || ""}`.toLowerCase();
-      return !/(embed|nomic|llava|bakllava|moondream|vision)/.test(name);
-    })
-    .sort((a, b) => (a.sizeBytes ?? Number.POSITIVE_INFINITY) - (b.sizeBytes ?? Number.POSITIVE_INFINITY))[0];
-}
-
 export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunConsoleProps) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [ollamaOnline, setOllamaOnline] = useState(false);
-  const [standardModel, setStandardModel] = useState<RuntimeModel | undefined>();
+  const [standardRoute, setStandardRoute] = useState<StandardRouteDecision | undefined>();
+  const [standardRouteError, setStandardRouteError] = useState<string | undefined>();
   const [customOllamaModel, setCustomOllamaModel] = useState<RuntimeModel | undefined>();
   const [preferLoadedModel, setPreferLoadedModel] = useState(false);
-  const [warmedStandardModel, setWarmedStandardModel] = useState<string | undefined>();
-  const [failedStandardModel, setFailedStandardModel] = useState<string | undefined>();
-  const [warmingStandard, setWarmingStandard] = useState(false);
   const [gpu, setGpu] = useState<string | false>(false);
   const [loaded, setLoaded] = useState<string | undefined>();
   const [loadedPath, setLoadedPath] = useState<string | undefined>();
@@ -216,16 +193,23 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       const { runtimes } = await client.runtimes();
       const engine = runtimes.find((runtime) => runtime.id === "llamacpp");
       const ollama = runtimes.find((runtime) => runtime.id === "ollama");
-      const nextStandardModel = ollama?.online ? pickStandardModel(ollama.models) : undefined;
       const nextLoadedModel = engine?.loadedModels?.[0];
-      const [configResult, serverResult] = await Promise.allSettled([client.engineConfig(), client.engineServerStatus()]);
+      const [configResult, serverResult, routeResult] = await Promise.allSettled([
+        client.engineConfig(),
+        client.engineServerStatus(),
+        client.standardRoute()
+      ]);
       if (configResult.status === "fulfilled") setRuntimeConfig(configResult.value.config);
       if (serverResult.status === "fulfilled") setServerStatus(serverResult.value);
+      if (routeResult.status === "fulfilled") {
+        setStandardRoute(routeResult.value);
+        setStandardRouteError(undefined);
+      } else {
+        setStandardRoute(undefined);
+        setStandardRouteError((routeResult.reason as Error).message);
+      }
       setAvailable(Boolean(engine?.installed));
       setOllamaOnline(Boolean(ollama?.online));
-      setStandardModel(nextStandardModel);
-      setWarmedStandardModel((current) => (current && current === nextStandardModel?.name ? current : undefined));
-      setFailedStandardModel((current) => (current && current === nextStandardModel?.name ? current : undefined));
       setPreferLoadedModel((current) => {
         if (nextLoadedModel?.name) return true;
         return current;
@@ -273,31 +257,6 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     }
   }, []);
 
-  const warmStandardModel = useCallback(async () => {
-    const modelName = standardModel?.name;
-    if (!modelName || warmingStandard || warmedStandardModel === modelName) return;
-    setWarmingStandard(true);
-    try {
-      const response = await client.chat({
-        runtime: "ollama",
-        model: modelName,
-        stream: false,
-        keep_alive: STANDARD_KEEP_ALIVE,
-        options: { num_ctx: STANDARD_CONTEXT, num_predict: 1, temperature: 0 },
-        messages: [{ role: "user", content: "ready" }]
-      });
-      if (!response.ok) throw new Error(`Warmup failed with ${response.status}`);
-      await response.text();
-      setWarmedStandardModel(modelName);
-      setFailedStandardModel(undefined);
-    } catch (err) {
-      setFailedStandardModel(modelName);
-      setError(`Standard model warmup failed: ${(err as Error).message}`);
-    } finally {
-      setWarmingStandard(false);
-    }
-  }, [standardModel, warmedStandardModel, warmingStandard]);
-
   // Auto-refresh whenever the tab becomes active (e.g. right after a download).
   useEffect(() => {
     if (active) {
@@ -305,12 +264,6 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       void scan();
     }
   }, [active, refreshStatus, scan]);
-
-  useEffect(() => {
-    if (active && standardModel && warmedStandardModel !== standardModel.name) {
-      void warmStandardModel();
-    }
-  }, [active, standardModel, warmedStandardModel, warmStandardModel]);
 
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
@@ -331,23 +284,22 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     return matches.slice(0, 200);
   }, [models, query, isTyping]);
 
-  const activeOllamaModel = customOllamaModel || standardModel;
-  const standardReady = ollamaOnline && Boolean(standardModel);
-  const standardWarmed = Boolean(standardModel && warmedStandardModel === standardModel.name);
-  const standardFailed = Boolean(standardModel && failedStandardModel === standardModel.name);
-  const standardUsable = standardReady && standardWarmed && !warmingStandard && !standardFailed;
-  const shouldUseStandardModel = !preferLoadedModel && Boolean(activeOllamaModel) && (activeOllamaModel === standardModel ? standardUsable : ollamaOnline);
-  const usingLoadedModel = !shouldUseStandardModel && Boolean(loaded);
-  const chatReady = shouldUseStandardModel || usingLoadedModel;
-  const assistantLabel = shouldUseStandardModel
-    ? activeOllamaModel?.displayName || activeOllamaModel?.name || "Model"
-    : loaded || "Model";
-  const inputPlaceholder = shouldUseStandardModel
+  const backendStandardModel = standardRoute?.selected || undefined;
+  const shouldUseOllamaModel = !preferLoadedModel && Boolean(customOllamaModel) && ollamaOnline;
+  const shouldUseBackendStandardRoute = !preferLoadedModel && !customOllamaModel && Boolean(backendStandardModel);
+  const usingLoadedModel = !shouldUseOllamaModel && !shouldUseBackendStandardRoute && Boolean(loaded);
+  const chatReady = shouldUseOllamaModel || shouldUseBackendStandardRoute || usingLoadedModel;
+  const assistantLabel = shouldUseOllamaModel
+    ? customOllamaModel?.displayName || customOllamaModel?.name || "Model"
+    : shouldUseBackendStandardRoute
+      ? backendStandardModel?.name || "HT route"
+      : loaded || "Model";
+  const inputPlaceholder = shouldUseOllamaModel || shouldUseBackendStandardRoute
     ? "Type a message and press Enter..."
     : loaded
       ? "Type a message and press Enter..."
-      : standardModel && !standardFailed
-        ? "Warming local model..."
+      : standardRouteError
+        ? "Standard route unavailable"
         : "Load a model first";
 
   const load = useCallback(
@@ -483,10 +435,10 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
 
     try {
       const request =
-        shouldUseStandardModel && activeOllamaModel
+        shouldUseOllamaModel && customOllamaModel
           ? {
               runtime: "ollama",
-              model: activeOllamaModel.name,
+              model: customOllamaModel.name,
               stream: true,
               keep_alive: STANDARD_KEEP_ALIVE,
               options: { num_ctx: STANDARD_CONTEXT, num_predict: maxTokens, temperature: 0.7 },
@@ -559,7 +511,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       abortControllerRef.current = null;
       void refreshStatus();
     }
-  }, [input, generating, chatReady, turns, shouldUseStandardModel, activeOllamaModel, maxTokens, refreshStatus]);
+  }, [input, generating, chatReady, turns, shouldUseOllamaModel, customOllamaModel, maxTokens, refreshStatus]);
 
   return (
     <div className="run-console">
@@ -579,9 +531,14 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
           ) : (
             <span className="pill pill-muted">No model loaded</span>
           )}
-          {activeOllamaModel && !preferLoadedModel && (
-            <span className={`pill ${activeOllamaModel === standardModel && standardWarmed ? "pill-ok" : "pill-muted"}`} title={activeOllamaModel.name}>
-              {activeOllamaModel === standardModel ? "Default" : "Ollama"}: {activeOllamaModel.displayName || activeOllamaModel.name}
+          {customOllamaModel && !preferLoadedModel && (
+            <span className="pill pill-muted" title={customOllamaModel.name}>
+              Ollama: {customOllamaModel.displayName || customOllamaModel.name}
+            </span>
+          )}
+          {!customOllamaModel && backendStandardModel && !preferLoadedModel && (
+            <span className="pill pill-ok" title={standardRoute?.reason}>
+              Default route: {backendStandardModel.name}
             </span>
           )}
           {loaded && (
@@ -611,7 +568,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
 
       <section className="run-benchmark">
         <div>
-          <span className="run-owned-label">Speed proof</span>
+          <span className="run-owned-label">Speed metrics</span>
           <p className="run-sub">
             {benchmark
               ? `${benchmark.model}: ${benchmark.firstTokenMs}ms first token, ${benchmark.totalMs}ms total, ${benchmark.tokensPerSecond} tok/s`

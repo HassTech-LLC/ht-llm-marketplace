@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ModelMarketplace, type MarketplaceTheme } from "@ht-llm-marketplace/react";
 import { MarketplaceClient } from "@ht-llm-marketplace/sdk";
 import { RunConsole, type PendingLoad } from "./RunConsole";
+import { ProofPanel } from "./ProofPanel";
 
 const THEME_STORAGE_KEY = "ht_marketplace:theme";
 
 const client = new MarketplaceClient({ apiUrl: "http://127.0.0.1:3001" });
 
-type Tab = "marketplace" | "run";
+type Tab = "marketplace" | "run" | "proof";
 
 interface Toast {
   id: string;
@@ -102,6 +103,9 @@ export function App() {
         <button className={tab === "run" ? "active" : ""} onClick={() => setTab("run")}>
           HT Studio
         </button>
+        <button className={tab === "proof" ? "active" : ""} onClick={() => setTab("proof")}>
+          Proof
+        </button>
       </nav>
 
       {/* Both panes stay mounted so state and chat history survive tab switches. */}
@@ -110,6 +114,9 @@ export function App() {
       </div>
       <div className="studio-pane" style={{ display: tab === "run" ? "block" : "none" }}>
         <RunConsole active={tab === "run"} pendingLoad={pendingLoad} onPendingLoadHandled={() => setPendingLoad(null)} />
+      </div>
+      <div className="studio-pane" style={{ display: tab === "proof" ? "block" : "none" }}>
+        <ProofPanel active={tab === "proof"} />
       </div>
 
       {toasts.length > 0 && (

@@ -38,7 +38,7 @@ import {
   parseOpenAiChatRequest,
   type OpenAiUsage
 } from "./engine/openai.js";
-import { fetchTextWithLimit, README_RESPONSE_LIMIT } from "./http.js";
+import { fetchTextWithLimit, fetchWithTimeout, README_RESPONSE_LIMIT, responseTextWithLimit } from "./http.js";
 import { estimateTokens as estimateResponseTokens, inputToMessages, responseObject, streamEvents } from "./responses/adapter.js";
 import type { LocalResponsesRequest } from "./responses/types.js";
 import { LlamaServerManager } from "./runtime/llama-server.js";
@@ -535,6 +535,10 @@ export function createServer(context: RuntimeContext) {
       if (route === "POST /v1/embeddings") {
         const provider = await context.embeddings;
         if (!provider) {
+          const delegated = delegatedBackend(context);
+          if (delegated && "endpoint" in delegated) {
+            return proxyJsonRequest(request, response, `${delegated.endpoint}/v1/embeddings`, await readJson<unknown>(request, 512_000));
+          }
           return json(
             response,
             {
@@ -621,7 +625,7 @@ function standardRouteDecision(context: RuntimeContext, models = context.modelIn
   });
 }
 
-function delegatedBackendError(context: RuntimeContext): { status: number; message: string } | undefined {
+function delegatedBackend(context: RuntimeContext): { endpoint: string } | { status: number; message: string } | undefined {
   const config = context.store.getRuntimeConfig();
   if (config.backend !== "delegated-server" && !config.delegatedServer.enabled) return undefined;
   const status = context.llamaServer.status();
@@ -631,9 +635,14 @@ function delegatedBackendError(context: RuntimeContext): { status: number; messa
       message: `Delegated llama-server backend is selected, but no server is running. ${status.message}`
     };
   }
+  if (!status.endpoint) {
+    return {
+      status: 503,
+      message: "Delegated llama-server backend is selected, but no endpoint is available."
+    };
+  }
   return {
-    status: 501,
-    message: `Delegated llama-server is running at ${status.endpoint}, but chat proxying is not enabled in this build.`
+    endpoint: status.endpoint
   };
 }
 
@@ -695,8 +704,9 @@ async function engineChat(
   body: { messages?: ChatMessage[]; model?: string; stream?: boolean; artifactId?: string; path?: string; systemPrompt?: string; gpuLayers?: number; contextSize?: number; threads?: number; maxTokens?: number; temperature?: number }
 ) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const delegatedError = delegatedBackendError(context);
-  if (delegatedError) return json(response, { error: delegatedError.message }, delegatedError.status);
+  const delegated = delegatedBackend(context);
+  if (delegated && "status" in delegated) return json(response, { error: delegated.message }, delegated.status);
+  if (delegated) return delegatedOllamaChat(request, response, delegated.endpoint, body);
 
   let useFallbackToOllama = false;
 
@@ -820,6 +830,231 @@ async function engineChat(
   response.end();
 }
 
+async function delegatedOllamaChat(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  endpoint: string,
+  body: { messages?: ChatMessage[]; model?: string; stream?: boolean; maxTokens?: number; temperature?: number }
+) {
+  const stream = body.stream !== false;
+  const modelName = body.model || "local";
+  const upstream = await delegatedPostJson(request, `${endpoint}/v1/chat/completions`, {
+      model: modelName,
+      messages: body.messages || [],
+      stream,
+      max_tokens: body.maxTokens,
+      temperature: body.temperature
+  });
+
+  if (!stream) {
+    const payload = await safeJson(upstream);
+    if (!upstream.ok) return json(response, payload, upstream.status);
+    const content = extractOpenAiContent(payload);
+    return json(response, { model: modelName, message: { role: "assistant", content }, done: true }, upstream.status);
+  }
+
+  response.writeHead(upstream.status, { "content-type": "application/x-ndjson", "cache-control": "no-cache" });
+  if (!upstream.ok || !upstream.body) {
+    response.write(`${JSON.stringify({ model: modelName, error: await upstream.text(), done: true })}\n`);
+    response.end();
+    return;
+  }
+  await pipeOpenAiSseAsOllamaNdjson(upstream, response, modelName);
+}
+
+async function delegatedOpenAiChat(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  endpoint: string,
+  input: { model?: string; messages: ChatMessage[]; stream: boolean; maxTokens?: number; temperature?: number }
+) {
+  const upstream = await delegatedPostJson(request, `${endpoint}/v1/chat/completions`, {
+      model: input.model || "local",
+      messages: input.messages,
+      stream: input.stream,
+      max_tokens: input.maxTokens,
+      temperature: input.temperature
+  });
+  response.writeHead(upstream.status, {
+    "content-type": upstream.headers.get("content-type") || (input.stream ? "text/event-stream" : "application/json"),
+    "cache-control": upstream.headers.get("cache-control") || "no-cache"
+  });
+  if (!upstream.body) {
+    response.end();
+    return;
+  }
+  await pipeResponseBodyWithLimit(upstream, response);
+  response.end();
+}
+
+async function delegatedResponses(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  endpoint: string,
+  parsed: LocalResponsesRequest,
+  messages: ChatMessage[],
+  body: Record<string, unknown>
+) {
+  const modelName = parsed.model || "local";
+  const maxTokens = optionalClampedInt(body.max_output_tokens, "max_output_tokens", 1, MAX_TOKENS) || 1024;
+  const temperature = optionalClampedFloat(body.temperature, "temperature", 0, 2) ?? 0.7;
+  const stream = body.stream === true;
+  const id = `resp_${cryptoRandomId()}`;
+  if (!stream) {
+    const upstream = await delegatedPostJson(request, `${endpoint}/v1/chat/completions`, {
+      model: modelName,
+      messages,
+      stream: false,
+      max_tokens: maxTokens,
+      temperature
+    });
+    const payload = await safeJson(upstream);
+    if (!upstream.ok) return json(response, payload, upstream.status);
+    const content = extractOpenAiContent(payload);
+    return json(
+      response,
+      responseObject({
+        id,
+        model: modelName,
+        text: content,
+        inputTokens: estimateResponseTokens(messages.map((message) => message.content).join("\n")),
+        outputTokens: estimateResponseTokens(content)
+      })
+    );
+  }
+
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  writeResponseEvent(response, "response.created", { id, object: "response", model: modelName, status: "in_progress" });
+  const upstream = await delegatedPostJson(request, `${endpoint}/v1/chat/completions`, {
+    model: modelName,
+    messages,
+    stream: true,
+    max_tokens: maxTokens,
+    temperature
+  });
+  if (!upstream.ok || !upstream.body) {
+    writeResponseEvent(response, "error", { error: { message: await upstream.text() } });
+    response.end();
+    return;
+  }
+  let content = "";
+  await readOpenAiSse(upstream, (payload) => {
+    const token = extractOpenAiDelta(payload);
+    if (!token) return;
+    content += token;
+    writeResponseEvent(response, "response.output_text.delta", { response_id: id, delta: token });
+  });
+  for (const event of streamEvents({ id, model: modelName, text: content }).slice(2)) {
+    writeResponseEvent(response, event.event, event.data);
+  }
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+async function proxyJsonRequest(request: http.IncomingMessage, response: http.ServerResponse, url: string, body: unknown) {
+  const upstream = await delegatedPostJson(request, url, body);
+  const text = await responseTextWithLimit(upstream, DELEGATED_JSON_RESPONSE_LIMIT);
+  response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "application/json" });
+  response.end(text);
+}
+
+const DELEGATED_REQUEST_TIMEOUT_MS = 120_000;
+const DELEGATED_JSON_RESPONSE_LIMIT = 1024 * 1024;
+const DELEGATED_STREAM_RESPONSE_LIMIT = 16 * 1024 * 1024;
+
+async function delegatedPostJson(request: http.IncomingMessage, url: string, body: unknown): Promise<Response> {
+  return fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: abortSignalForRequest(request),
+    timeoutMs: DELEGATED_REQUEST_TIMEOUT_MS
+  });
+}
+
+function abortSignalForRequest(request: http.IncomingMessage) {
+  const controller = new AbortController();
+  request.on("close", () => controller.abort());
+  return controller.signal;
+}
+
+async function pipeOpenAiSseAsOllamaNdjson(upstream: Response, response: http.ServerResponse, modelName: string) {
+  await readOpenAiSse(upstream, (payload) => {
+    const token = extractOpenAiDelta(payload);
+    if (token) response.write(`${JSON.stringify(ollamaChunk(modelName, token))}\n`);
+  });
+  response.write(`${JSON.stringify(ollamaDone(modelName))}\n`);
+  response.end();
+}
+
+async function readOpenAiSse(upstream: Response, onPayload: (payload: unknown) => void) {
+  if (!upstream.body) return;
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let bytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > DELEGATED_STREAM_RESPONSE_LIMIT) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`Delegated llama-server stream exceeded ${DELEGATED_STREAM_RESPONSE_LIMIT} bytes.`);
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const event of events) {
+      for (const line of event.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        try {
+          onPayload(JSON.parse(data));
+        } catch {
+          // Ignore malformed upstream chunks.
+        }
+      }
+    }
+  }
+}
+
+async function safeJson(response: Response): Promise<unknown> {
+  const text = await responseTextWithLimit(response, DELEGATED_JSON_RESPONSE_LIMIT);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { error: { message: text || `Upstream returned ${response.status}` } };
+  }
+}
+
+async function pipeResponseBodyWithLimit(upstream: Response, response: http.ServerResponse) {
+  const reader = upstream.body?.getReader();
+  if (!reader) return;
+  let bytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > DELEGATED_STREAM_RESPONSE_LIMIT) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`Delegated llama-server response exceeded ${DELEGATED_STREAM_RESPONSE_LIMIT} bytes.`);
+    }
+    response.write(Buffer.from(value));
+  }
+}
+
+function extractOpenAiContent(payload: unknown): string {
+  const choice = (payload as { choices?: Array<{ message?: { content?: string }; text?: string }> }).choices?.[0];
+  return choice?.message?.content ?? choice?.text ?? "";
+}
+
+function extractOpenAiDelta(payload: unknown): string {
+  const choice = (payload as { choices?: Array<{ delta?: { content?: string }; message?: { content?: string }; text?: string }> }).choices?.[0];
+  return choice?.delta?.content ?? choice?.message?.content ?? choice?.text ?? "";
+}
+
 async function localGgufModels(context: RuntimeContext) {
   return context.modelIndex.models();
 }
@@ -908,9 +1143,18 @@ async function openAiChat(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
-  const delegatedError = delegatedBackendError(context);
-  if (delegatedError) {
-    return json(response, { error: { message: delegatedError.message, type: "service_unavailable" } }, delegatedError.status);
+  const delegated = delegatedBackend(context);
+  if (delegated && "status" in delegated) {
+    return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
+  }
+  if (delegated) {
+    return delegatedOpenAiChat(request, response, delegated.endpoint, {
+      model: parsed.model,
+      messages: parsed.messages,
+      stream: parsed.stream,
+      maxTokens: parsed.maxTokens,
+      temperature: parsed.temperature
+    });
   }
 
   // If a specific model was named and isn't the loaded one, load it from local storage.
@@ -1006,9 +1250,12 @@ async function openAiResponses(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
-  const delegatedError = delegatedBackendError(context);
-  if (delegatedError) {
-    return json(response, { error: { message: delegatedError.message, type: "service_unavailable" } }, delegatedError.status);
+  const delegated = delegatedBackend(context);
+  if (delegated && "status" in delegated) {
+    return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
+  }
+  if (delegated) {
+    return delegatedResponses(request, response, delegated.endpoint, parsed, messages, body);
   }
 
   const model = optionalString(body.model, "model", 500);

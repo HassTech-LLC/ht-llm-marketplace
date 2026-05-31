@@ -304,6 +304,16 @@ export interface StandardRouteDecision {
   candidates: StandardRouteCandidate[];
 }
 
+export interface CompatibilityScorecard {
+  generatedAt: string;
+  claim: "foundation" | "candidate" | "best-replacement";
+  summary: string;
+  evidence: Array<{ id: string; label: string; status: "pass" | "partial" | "planned"; detail: string }>;
+  competitors: Array<{ name: string; parity: "strong" | "partial" | "planned"; covered: string[]; gaps: string[] }>;
+  gates: Array<{ id: string; label: string; status: "pass" | "partial" | "planned" }>;
+}
+
+
 export interface QueueStatus {
   running?: QueueEntry;
   runningItems?: QueueEntry[];
@@ -534,6 +544,11 @@ export class MarketplaceClient {
   standardRoute() {
     return this.get<StandardRouteDecision>("/api/routing/standard");
   }
+
+  compatibilityScorecard() {
+    return this.get<CompatibilityScorecard>("/api/compatibility/scorecard");
+  }
+
 
   queueStatus() {
     return this.get<QueueStatus>("/api/queue");
