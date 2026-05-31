@@ -23,7 +23,7 @@ try {
     await page.getByRole("button", { name: "Marketplace" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "HT Studio" }).click();
     await page.getByRole("heading", { name: "HT Studio" }).waitFor({ timeout: 10_000 });
-    const tabs = await page.locator(".studio-tabbar button").allTextContents();
+    const tabs = (await page.locator(".studio-tabbar button").allTextContents()).map((tab) => tab.trim());
     if (tabs.length !== 2 || tabs[0] !== "Marketplace" || tabs[1] !== "HT Studio") {
       throw new Error(`Unexpected Studio tabs: ${tabs.join(", ")}`);
     }

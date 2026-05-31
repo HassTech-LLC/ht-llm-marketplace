@@ -826,15 +826,6 @@ body {
     min-width: 0;
   }
 
-  .proof-panel {
-    padding: 16px;
-  }
-
-  .proof-grid,
-  .proof-gates,
-  .proof-evidence {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Pulsing thinking light indicator */
