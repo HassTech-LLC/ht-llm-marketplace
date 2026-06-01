@@ -11,7 +11,14 @@ RUN npm ci --ignore-scripts
 
 FROM deps AS build
 COPY . .
-RUN npm run build
+RUN node scripts/clean-dist.mjs \
+  && npm run check \
+  && npm run build -w @ht-llm-marketplace/sdk \
+  && npm run build -w @ht-llm-marketplace/react \
+  && npm run build -w @ht-llm-marketplace/web-component \
+  && npm run build -w @ht-llm-marketplace/daemon \
+  && npm run build -w @ht-llm-marketplace/cli \
+  && npm run build -w @ht-llm-marketplace/studio
 
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production

@@ -22,6 +22,8 @@ packages/daemon/downloads/
 legacy/**/node_modules/
 legacy/**/dist/
 legacy/**/.vite/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
 .agents/.codex/
 
 # Local scratch / dev captures (not part of the project source)

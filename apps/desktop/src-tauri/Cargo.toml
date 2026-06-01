@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 tauri = { version = "2.11.0", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }

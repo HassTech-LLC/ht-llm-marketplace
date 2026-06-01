@@ -5,7 +5,7 @@
   "identifier": "com.hassantech.llm-marketplace",
   "build": {
     "frontendDist": "../../studio/dist",
-    "beforeBuildCommand": "npm run build -w @ht-llm-marketplace/studio"
+    "beforeBuildCommand": "npm --prefix ../.. run build -w @ht-llm-marketplace/studio"
   },
   "app": {
     "windows": [
@@ -20,6 +20,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "icon": ["icons/icon.ico"],
     "resources": {
       "../../../packages/daemon/dist": "daemon",
       "../../../packages/cli/dist": "cli"
