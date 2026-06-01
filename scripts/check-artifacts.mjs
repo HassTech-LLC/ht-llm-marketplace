@@ -6,6 +6,9 @@ const forbiddenPaths = [
   ".playwright-mcp",
   "output/playwright",
   "design-audit",
+  ".remember",
+  "studio-marketplace.jpg",
+  "studio-proof.jpg",
   "net.txt",
   "console-errors.txt",
   "PROJECT_MEMORY.md"

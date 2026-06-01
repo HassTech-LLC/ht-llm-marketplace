@@ -195,7 +195,7 @@ export interface DeletePlan {
   fileActions: Array<{ path: string; sizeBytes?: number; action: "delete-file" | "remove-empty-dir" }>;
   blockedReasons: string[];
   unknownLeftovers: string[];
-  proof: string[];
+  evidence: string[];
   createdAt: string;
 }
 
@@ -304,16 +304,6 @@ export interface StandardRouteDecision {
   candidates: StandardRouteCandidate[];
 }
 
-export interface CompatibilityScorecard {
-  generatedAt: string;
-  claim: "foundation" | "candidate" | "best-replacement";
-  summary: string;
-  evidence: Array<{ id: string; label: string; status: "pass" | "partial" | "planned"; detail: string }>;
-  competitors: Array<{ name: string; parity: "strong" | "partial" | "planned"; covered: string[]; gaps: string[] }>;
-  gates: Array<{ id: string; label: string; status: "pass" | "partial" | "planned" }>;
-}
-
-
 export interface QueueStatus {
   running?: QueueEntry;
   runningItems?: QueueEntry[];
@@ -345,6 +335,31 @@ export interface EngineRuntimeConfig {
     parallel: number;
     continuousBatching: boolean;
   };
+  hotPool: {
+    enabled: boolean;
+    maxModels: number;
+    maxModelBytes: number;
+    autoWarm: boolean;
+  };
+}
+
+export interface HotPoolEntry {
+  model: string;
+  path: string;
+  source: string;
+  sizeBytes: number;
+  state: "loading" | "ready" | "failed";
+  gpu: string | false;
+  loadedAt?: string;
+  lastUsedAt?: string;
+  error?: string;
+}
+
+export interface HotPoolStatus {
+  enabled: boolean;
+  maxModels: number;
+  maxModelBytes: number;
+  entries: HotPoolEntry[];
 }
 
 export interface LocalEmbeddingRequest {
@@ -398,6 +413,16 @@ export interface LlamaServerStatus {
   running: boolean;
   endpoint?: string;
   pid?: number;
+  message: string;
+}
+
+export interface LlamaServerInstallStatus {
+  ok: boolean;
+  installed: boolean;
+  binaryPath?: string;
+  release?: string;
+  asset?: string;
+  sourceUrl?: string;
   message: string;
 }
 
@@ -545,11 +570,6 @@ export class MarketplaceClient {
     return this.get<StandardRouteDecision>("/api/routing/standard");
   }
 
-  compatibilityScorecard() {
-    return this.get<CompatibilityScorecard>("/api/compatibility/scorecard");
-  }
-
-
   queueStatus() {
     return this.get<QueueStatus>("/api/queue");
   }
@@ -584,6 +604,18 @@ export class MarketplaceClient {
 
   engineServerStatus() {
     return this.get<LlamaServerStatus>("/api/engine/server/status");
+  }
+
+  installEngineServer(request: { flavor?: "auto" | "vulkan" | "cpu" | "cuda"; force?: boolean; release?: string } = {}) {
+    return this.post<LlamaServerInstallStatus>("/api/engine/server/install", request);
+  }
+
+  hotPoolStatus() {
+    return this.get<HotPoolStatus>("/api/engine/hot-pool");
+  }
+
+  warmHotPool() {
+    return this.post<HotPoolStatus>("/api/engine/hot-pool/warm", {});
   }
 
   startEngineServer() {

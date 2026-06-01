@@ -20,7 +20,7 @@ export function createDeletePlan(context: DeleteContext, artifactId: string): De
   const blockedReasons: string[] = [];
   const providerActions: string[] = [];
   const fileActions: DeletePlan["fileActions"] = [];
-  const proof: string[] = [];
+  const evidence: string[] = [];
 
   if (!artifact.owned) {
     blockedReasons.push("Artifact is not marketplace-owned; deletion is refused.");
@@ -36,9 +36,9 @@ export function createDeletePlan(context: DeleteContext, artifactId: string): De
       blockedReasons.push(safe.reason);
     } else if (fs.existsSync(artifact.path)) {
       fileActions.push({ path: artifact.path, sizeBytes: fileSize(artifact.path), action: "delete-file" });
-      proof.push(`Resolved file is inside registered marketplace storage root.`);
+      evidence.push(`Resolved file is inside registered marketplace storage root.`);
     } else {
-      proof.push("Owned file path is already absent; provider unregister may still be needed.");
+      evidence.push("Owned file path is already absent; provider unregister may still be needed.");
     }
   }
 
@@ -56,7 +56,7 @@ export function createDeletePlan(context: DeleteContext, artifactId: string): De
     fileActions,
     blockedReasons,
     unknownLeftovers: [],
-    proof,
+    evidence,
     createdAt: now
   };
   return context.store.saveDeletePlan(plan);
@@ -87,7 +87,7 @@ export async function confirmDeletePlan(context: DeleteContext, planId: string):
   }
 
   context.store.deleteArtifact(artifact.id);
-  const executed = { ...plan, status: "executed" as const, proof: [...plan.proof, "Post-delete scan confirmed owned artifact is absent."] };
+  const executed = { ...plan, status: "executed" as const, evidence: [...plan.evidence, "Post-delete scan confirmed owned artifact is absent."] };
   context.store.saveDeletePlan(executed);
   context.store.audit("delete", artifact.name, executed);
   return executed;

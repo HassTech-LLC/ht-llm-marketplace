@@ -23,6 +23,7 @@ import {
 } from "./engine/doctor.js";
 import { runBenchmark } from "./engine/benchmarks.js";
 import { defaultModelRoots } from "./engine/discover.js";
+import { HotModelPool } from "./engine/hot-pool.js";
 import { LlamaEngine } from "./engine/llama.js";
 import { ModelIndex } from "./engine/model-index.js";
 import { GenerationQueue } from "./engine/queue.js";
@@ -41,7 +42,7 @@ import {
 import { fetchTextWithLimit, fetchWithTimeout, README_RESPONSE_LIMIT, responseTextWithLimit } from "./http.js";
 import { estimateTokens as estimateResponseTokens, inputToMessages, responseObject, streamEvents } from "./responses/adapter.js";
 import type { LocalResponsesRequest } from "./responses/types.js";
-import { LlamaServerManager } from "./runtime/llama-server.js";
+import { installManagedLlamaServer, llamaServerManagedRoot, LlamaServerManager } from "./runtime/llama-server.js";
 import { sanitizeRuntimeConfig } from "./runtime/config.js";
 import { MarketplaceStore } from "./store.js";
 import {
@@ -63,6 +64,7 @@ export interface RuntimeContext {
   lmstudio: LmStudioAdapter;
   downloads: DownloadManager;
   engine: LlamaEngine;
+  hotPool: HotModelPool;
   modelIndex: ModelIndex;
   queue: GenerationQueue;
   embeddings: Promise<EmbeddingProvider | undefined>;
@@ -96,12 +98,13 @@ export function createContext(config: DaemonConfig): RuntimeContext {
   const lmstudio = new LmStudioAdapter(config.lmStudioHost);
   const downloads = new DownloadManager(config, store, ollama);
   const engine = new LlamaEngine();
+  const hotPool = new HotModelPool();
   const embeddings = createEmbeddingProvider().catch(() => undefined);
   const llamaServer = new LlamaServerManager({
     binaryPath: process.env.LLAMA_SERVER_BIN,
     modelPath: process.env.LLAMA_SERVER_MODEL,
     port: process.env.LLAMA_SERVER_PORT ? Number(process.env.LLAMA_SERVER_PORT) : undefined,
-    searchRoots: [process.cwd(), config.storageDir, config.modelsDir]
+    searchRoots: [llamaServerManagedRoot(config.storageDir), process.cwd(), config.storageDir, config.modelsDir]
   });
   const modelIndex = new ModelIndex(() =>
     defaultModelRoots({
@@ -117,7 +120,8 @@ export function createContext(config: DaemonConfig): RuntimeContext {
     void engine.probe();
   }
   void modelIndex.refresh("startup");
-  return { config, store, ollama, lmstudio, downloads, engine, modelIndex, queue, embeddings, llamaServer };
+  void warmHotPool({ config, store, ollama, lmstudio, downloads, engine, hotPool, modelIndex, queue, embeddings, llamaServer }).catch(() => undefined);
+  return { config, store, ollama, lmstudio, downloads, engine, hotPool, modelIndex, queue, embeddings, llamaServer };
 }
 
 export function createServer(context: RuntimeContext) {
@@ -188,6 +192,14 @@ export function createServer(context: RuntimeContext) {
 
       if (route === "GET /api/routing/standard") {
         return json(response, standardRouteDecision(context, await context.modelIndex.models()));
+      }
+
+      if (route === "GET /api/engine/hot-pool") {
+        return json(response, context.hotPool.status(context.store.getRuntimeConfig()));
+      }
+
+      if (route === "POST /api/engine/hot-pool/warm") {
+        return json(response, await warmHotPool(context));
       }
 
       if (route === "GET /api/queue") {
@@ -422,10 +434,19 @@ export function createServer(context: RuntimeContext) {
       }
 
       if (route === "GET /api/engine/server/status") {
+        await configureLlamaServer(context);
         return json(response, context.llamaServer.status());
       }
 
+      if (route === "POST /api/engine/server/install") {
+        const body = await readJson<unknown>(request, 64_000);
+        const result = await installManagedLlamaServer(context.config.storageDir, sanitizeLlamaServerInstallRequest(body));
+        await configureLlamaServer(context);
+        return json(response, result, result.ok ? 200 : 422);
+      }
+
       if (route === "POST /api/engine/server/start") {
+        await configureLlamaServer(context);
         return json(response, await context.llamaServer.start());
       }
 
@@ -535,7 +556,7 @@ export function createServer(context: RuntimeContext) {
       if (route === "POST /v1/embeddings") {
         const provider = await context.embeddings;
         if (!provider) {
-          const delegated = delegatedBackend(context);
+          const delegated = await delegatedBackend(context, { autoStart: false });
           if (delegated && "endpoint" in delegated) {
             return proxyJsonRequest(request, response, `${delegated.endpoint}/v1/embeddings`, await readJson<unknown>(request, 512_000));
           }
@@ -625,150 +646,51 @@ function standardRouteDecision(context: RuntimeContext, models = context.modelIn
   });
 }
 
-interface ScorecardInput {
-  models: Array<{ runnable?: boolean }>;
-  benchmarks: Array<{ ok: boolean }>;
-  queue: { recent: Array<{ state: string }> };
-  embeddingsAvailable: boolean;
-  delegatedServer: { available: boolean; running: boolean; endpoint?: string; message: string };
-  documentsIndexed: number;
+async function warmHotPool(context: RuntimeContext) {
+  const config = context.store.getRuntimeConfig();
+  if (!context.hotPool || !config.hotPool?.enabled) return context.hotPool?.status(config) ?? { enabled: false, maxModels: 0, maxModelBytes: 0, entries: [] };
+  const decision = standardRouteDecision(context, await context.modelIndex.models());
+  const models = decision.candidates
+    .filter((candidate) => candidate.healthy)
+    .map((candidate) => candidate.model);
+  return context.hotPool.warm(models, config);
 }
 
-interface ReplacementScorecard {
-  generatedAt: string;
-  claim: "foundation" | "candidate" | "best-replacement";
-  summary: string;
-  evidence: Array<{ id: string; label: string; status: "pass" | "partial" | "planned"; detail: string }>;
-  competitors: Array<{ name: string; parity: "strong" | "partial" | "planned"; covered: string[]; gaps: string[] }>;
-  gates: Array<{ id: string; label: string; status: "pass" | "partial" | "planned" }>;
+async function configureLlamaServer(context: RuntimeContext) {
+  const config = context.store.getRuntimeConfig();
+  const decision = standardRouteDecision(context, await context.modelIndex.models());
+  const selectedModel = decision.selected && !decision.selected.path.startsWith("virtual:") ? decision.selected.path : undefined;
+  context.llamaServer.configure({
+    binaryPath: process.env.LLAMA_SERVER_BIN,
+    modelPath: process.env.LLAMA_SERVER_MODEL || context.engine.loadedPath || selectedModel,
+    port: config.delegatedServer.port,
+    parallel: config.delegatedServer.parallel,
+    continuousBatching: config.delegatedServer.continuousBatching,
+    searchRoots: [llamaServerManagedRoot(context.config.storageDir), process.cwd(), context.config.storageDir, context.config.modelsDir]
+  });
 }
 
-function compatibilityScorecard(input: ScorecardInput): ReplacementScorecard {
-  const runnableModels = input.models.filter((model) => model.runnable);
-  const successfulBenchmarks = input.benchmarks.filter((benchmark) => benchmark.ok);
-  const failedBenchmarks = input.benchmarks.filter((benchmark) => !benchmark.ok);
-  const queueHealthy = input.queue.recent.filter((entry) => entry.state === "failed").length === 0;
-
-  const gates: ReplacementScorecard["gates"] = [
-    {
-      id: "local-models",
-      label: "Local GGUF discovery",
-      status: runnableModels.length > 0 ? "pass" : "planned"
-    },
-    {
-      id: "openai-ollama-api",
-      label: "OpenAI and Ollama-compatible APIs",
-      status: "pass"
-    },
-    {
-      id: "benchmarks",
-      label: "Measured local benchmark evidence",
-      status: successfulBenchmarks.length > 0 ? "pass" : input.benchmarks.length > 0 ? "partial" : "planned"
-    },
-    {
-      id: "delegated-batching",
-      label: "llama-server delegated batching",
-      status: input.delegatedServer.running ? "pass" : input.delegatedServer.available ? "partial" : "planned"
-    },
-    {
-      id: "embeddings",
-      label: "Local embeddings endpoint",
-      status: input.embeddingsAvailable ? "pass" : "partial"
-    },
-    {
-      id: "queue",
-      label: "Cancelable generation queue",
-      status: queueHealthy ? "pass" : "partial"
-    }
-  ];
-
-  const requiredPasses = ["local-models", "openai-ollama-api", "benchmarks", "queue"];
-  const requiredReady = requiredPasses.every((id) => gates.find((gate: any) => gate.id === id)?.status === "pass");
-  const allReady = gates.every((gate: any) => gate.status === "pass");
-  const claim: ReplacementScorecard["claim"] = allReady ? "best-replacement" : requiredReady ? "candidate" : "foundation";
-
-  return {
-    generatedAt: new Date().toISOString(),
-    claim,
-    summary:
-      claim === "best-replacement"
-        ? "HT Studio has enough runtime, API, benchmark, batching, queue, and embedding evidence to claim best-replacement readiness."
-        : claim === "candidate"
-          ? "HT Studio has the core replacement path working, with remaining proof needed for every advanced Ollama/LM Studio parity claim."
-          : "HT Studio is a replacement foundation until local benchmark and route evidence are present on this machine.",
-    gates,
-    evidence: [
-      {
-        id: "model-index",
-        label: "Model index",
-        status: runnableModels.length > 0 ? "pass" : "planned",
-        detail: `${runnableModels.length} runnable local models indexed.`
-      },
-      {
-        id: "benchmark-history",
-        label: "Benchmark history",
-        status: successfulBenchmarks.length > 0 ? "pass" : input.benchmarks.length > 0 ? "partial" : "planned",
-        detail: `${successfulBenchmarks.length} passing benchmark runs, ${failedBenchmarks.length} failed runs.`
-      },
-      {
-        id: "delegated-server",
-        label: "Delegated llama-server",
-        status: input.delegatedServer.running ? "pass" : input.delegatedServer.available ? "partial" : "planned",
-        detail: input.delegatedServer.running
-          ? `Running at ${input.delegatedServer.endpoint || "configured endpoint"}.`
-          : input.delegatedServer.message
-      },
-      {
-        id: "embeddings",
-        label: "Embeddings",
-        status: input.embeddingsAvailable ? "pass" : "partial",
-        detail: input.embeddingsAvailable
-          ? "Local embeddings provider is enabled."
-          : "OpenAI-compatible embeddings route exists, but no local provider is configured."
-      },
-      {
-        id: "documents",
-        label: "Document/RAG evidence",
-        status: input.documentsIndexed > 0 ? "pass" : "planned",
-        detail:
-          input.documentsIndexed > 0
-            ? `${input.documentsIndexed} documents indexed.`
-            : "Document/RAG surface is not part of the current studio build."
-      }
-    ],
-    competitors: [
-      {
-        name: "Ollama",
-        parity: "strong",
-        covered: ["Local GGUF execution", "Ollama-style /api/chat", "/api/tags", "model discovery"],
-        gaps: ["Full registry management parity still depends on catalog coverage and install flows."]
-      },
-      {
-        name: "LM Studio",
-        parity: "partial",
-        covered: ["OpenAI-compatible chat", "local model loading", "runtime controls"],
-        gaps: ["Desktop polish, model-card curation, and user-facing server controls need more smoke evidence."]
-      },
-      {
-        name: "llama.cpp server",
-        parity: input.delegatedServer.running ? "strong" : "partial",
-        covered: ["Delegated /v1/chat/completions proxy", "stream forwarding", "optional batching backend"],
-        gaps: input.delegatedServer.running ? [] : ["Start a delegated server to prove batching on this machine."]
-      },
-      {
-        name: "Jan / LocalAI / Open WebUI",
-        parity: "planned",
-        covered: ["OpenAI-compatible API foundation"],
-        gaps: ["Plugin ecosystems, multi-user hosting, and full admin surfaces are outside the current proof gate."]
-      }
-    ]
-  };
-}
-
-function delegatedBackend(context: RuntimeContext): { endpoint: string } | { status: number; message: string } | undefined {
+async function delegatedBackend(
+  context: RuntimeContext,
+  options: { autoStart?: boolean } = {}
+): Promise<{ endpoint: string } | { status: number; message: string } | undefined> {
   const config = context.store.getRuntimeConfig();
   if (config.backend !== "delegated-server" && !config.delegatedServer.enabled) return undefined;
-  const status = context.llamaServer.status();
+  await configureLlamaServer(context);
+  let status = context.llamaServer.status();
+  if (!status.running && options.autoStart !== false && status.available) {
+    status = await context.llamaServer.start();
+    if (status.running && status.endpoint) {
+      const ready = await waitForDelegatedHealth(status.endpoint, 45_000);
+      if (!ready) {
+        return {
+          status: 503,
+          message: `Delegated llama-server started, but did not become healthy in time. ${context.llamaServer.status().message}`
+        };
+      }
+      status = context.llamaServer.status();
+    }
+  }
   if (!status.running) {
     return {
       status: 503,
@@ -783,6 +705,31 @@ function delegatedBackend(context: RuntimeContext): { endpoint: string } | { sta
   }
   return {
     endpoint: status.endpoint
+  };
+}
+
+async function waitForDelegatedHealth(endpoint: string, timeoutMs: number) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const response = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return true;
+    } catch {
+      // Keep polling until the server finishes loading or the timeout expires.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+function sanitizeLlamaServerInstallRequest(value: unknown) {
+  const source = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const flavor = ["auto", "vulkan", "cpu", "cuda"].includes(String(source.flavor)) ? (source.flavor as "auto" | "vulkan" | "cpu" | "cuda") : "auto";
+  const release = typeof source.release === "string" && /^b[0-9]+$/.test(source.release) ? source.release : undefined;
+  return {
+    flavor,
+    force: source.force === true,
+    release
   };
 }
 
@@ -844,9 +791,12 @@ async function engineChat(
   body: { messages?: ChatMessage[]; model?: string; stream?: boolean; artifactId?: string; path?: string; systemPrompt?: string; gpuLayers?: number; contextSize?: number; threads?: number; maxTokens?: number; temperature?: number }
 ) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const delegated = delegatedBackend(context);
+  const delegated = await delegatedBackend(context);
   if (delegated && "status" in delegated) return json(response, { error: delegated.message }, delegated.status);
   if (delegated) return delegatedOllamaChat(request, response, delegated.endpoint, body);
+
+  const hotModel = await hotPoolTarget(context, body.model);
+  if (hotModel) return hotPoolChat(request, response, context, hotModel, messages, body);
 
   let useFallbackToOllama = false;
 
@@ -956,6 +906,59 @@ async function engineChat(
       `stream:${modelName}`,
       (queueSignal) =>
         context.engine.chat(messages, {
+          signal: combineAbortSignals(queueSignal, controller.signal),
+          maxTokens: body.maxTokens,
+          temperature: body.temperature,
+          onToken: (token) => response.write(`${JSON.stringify(ollamaChunk(modelName, token))}\n`)
+        }),
+      { signal: controller.signal }
+    );
+    response.write(`${JSON.stringify(ollamaDone(modelName))}\n`);
+  } catch (error) {
+    response.write(`${JSON.stringify({ model: modelName, error: (error as Error).message, done: true })}\n`);
+  }
+  response.end();
+}
+
+async function hotPoolTarget(context: RuntimeContext, requestedModel?: string) {
+  const config = context.store.getRuntimeConfig();
+  if (!context.hotPool || !config.hotPool?.enabled) return undefined;
+  let modelName = requestedModel;
+  if (!modelName) {
+    const decision = standardRouteDecision(context, await context.modelIndex.models());
+    modelName = decision.selected?.name;
+  }
+  if (!modelName) return undefined;
+  if (!context.hotPool.has(modelName) && config.hotPool.autoWarm) {
+    await warmHotPool(context);
+  }
+  return context.hotPool.has(modelName) ? modelName : undefined;
+}
+
+async function hotPoolChat(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RuntimeContext,
+  modelName: string,
+  messages: ChatMessage[],
+  body: { stream?: boolean; maxTokens?: number; temperature?: number }
+) {
+  const stream = body.stream !== false;
+  if (!stream) {
+    const content = await context.queue.run(`hot:${modelName}`, (signal) =>
+      context.hotPool.chat(modelName, messages, { maxTokens: body.maxTokens, temperature: body.temperature, signal })
+    );
+    return json(response, { model: modelName, message: { role: "assistant", content }, done: true });
+  }
+
+  response.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-cache" });
+  const controller = new AbortController();
+  request.on("close", () => controller.abort());
+  try {
+    await context.queue.run(
+      `hot-stream:${modelName}`,
+      (queueSignal) =>
+        context.hotPool.chat(modelName, messages, {
           signal: combineAbortSignals(queueSignal, controller.signal),
           maxTokens: body.maxTokens,
           temperature: body.temperature,
@@ -1283,7 +1286,7 @@ async function openAiChat(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
-  const delegated = delegatedBackend(context);
+  const delegated = await delegatedBackend(context);
   if (delegated && "status" in delegated) {
     return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
   }
@@ -1390,7 +1393,7 @@ async function openAiResponses(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
-  const delegated = delegatedBackend(context);
+  const delegated = await delegatedBackend(context);
   if (delegated && "status" in delegated) {
     return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
   }

@@ -4,11 +4,14 @@ import {
   type BenchmarkResult,
   type DiscoveredModel,
   type EngineRuntimeConfig,
+  type HotPoolStatus,
   type LlamaServerStatus,
   type QueueStatus,
   type RuntimeModel,
-  type StandardRouteDecision
+  type StandardRouteDecision,
+  type SystemScan
 } from "@ht-llm-marketplace/sdk";
+import { studioApiUrl } from "./api";
 
 const CopyIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
@@ -73,11 +76,35 @@ const CopyButton = ({ text }: { text: string }) => {
   );
 };
 
-const client = new MarketplaceClient({ apiUrl: "http://127.0.0.1:3001" });
+const client = new MarketplaceClient({ apiUrl: studioApiUrl() });
 
 const FAILED_KEY = "htlm:failedModels";
 const STANDARD_KEEP_ALIVE = "30m";
 const STANDARD_CONTEXT = 512;
+export const ICON_LABELS_STORAGE_KEY = "htlm:iconLabels";
+export const ICON_LABELS_EVENT = "htlm:icon-labels-changed";
+const AUTO_WARM_STORAGE_KEY = "htlm:autoWarm";
+
+const RUN_ICONS = {
+  active: "\u25cf",
+  bolt: "\u26a1\ufe0f",
+  bulb: "\ud83d\udca1",
+  check: "\u2713",
+  play: "\u25b6",
+  rocket: "\ud83d\ude80",
+  stop: "\u23f9",
+  warning: "\u26a0\ufe0f"
+};
+
+const PRESETS = [
+  { id: "fast", label: "Fast Chat", contextSize: 512, maxTokens: 96, temperature: 0.5 },
+  { id: "coding", label: "Coding", contextSize: 4096, maxTokens: 1024, temperature: 0.2 },
+  { id: "long", label: "Long Context", contextSize: 8192, maxTokens: 2048, temperature: 0.4 },
+  { id: "json", label: "JSON/API", contextSize: 2048, maxTokens: 512, temperature: 0.1 },
+  { id: "creative", label: "Creative", contextSize: 2048, maxTokens: 1024, temperature: 0.9 }
+] as const;
+
+type PresetId = (typeof PRESETS)[number]["id"];
 
 export interface PendingLoad {
   artifactId?: string;
@@ -95,6 +122,28 @@ interface ChatTurn {
   role: "user" | "assistant";
   content: string;
   thinking?: string;
+  timing?: RunTiming;
+  preset?: string;
+}
+
+interface RunTiming {
+  model: string;
+  backend: string;
+  firstTokenMs?: number;
+  totalMs?: number;
+  tokensApprox?: number;
+  tokensPerSecond?: number;
+  queueDepthAtStart: number;
+  generatedAt: string;
+}
+
+interface ComparisonResult {
+  model: string;
+  ok: boolean;
+  firstTokenMs?: number;
+  totalMs?: number;
+  tokensPerSecond?: number;
+  error?: string;
 }
 
 function formatBytes(bytes?: number): string {
@@ -127,6 +176,44 @@ function readFailed(): string[] {
   }
 }
 
+function readIconLabels(): boolean {
+  try {
+    return localStorage.getItem(ICON_LABELS_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function readAutoWarm(): boolean {
+  try {
+    return localStorage.getItem(AUTO_WARM_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function defaultThreadCount() {
+  try {
+    return navigator.hardwareConcurrency || 4;
+  } catch {
+    return 4;
+  }
+}
+
+function clampUiNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function estimateTokens(text: string) {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.round(words * 1.33));
+}
+
+function formatLatency(value?: number) {
+  return typeof value === "number" ? `${value}ms` : "n/a";
+}
+
 export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunConsoleProps) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [ollamaOnline, setOllamaOnline] = useState(false);
@@ -152,22 +239,36 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   const [generating, setGenerating] = useState(false);
   const [fullChatCopied, setFullChatCopied] = useState(false);
   const [contextSize, setContextSize] = useState<number>(2048);
-  const [threads, setThreads] = useState<number>(() => {
-    try {
-      return navigator.hardwareConcurrency || 4;
-    } catch {
-      return 4;
-    }
-  });
+  const [threads, setThreads] = useState<number>(() => defaultThreadCount());
   const [gpuLayers, setGpuLayers] = useState<number>(-1);
   const [maxTokens, setMaxTokens] = useState<number>(512);
+  const [temperature, setTemperature] = useState<number>(0.7);
+  const [preset, setPreset] = useState<PresetId>("fast");
+  const [runtimeControlsDirty, setRuntimeControlsDirty] = useState(false);
+  const [keepWarm, setKeepWarm] = useState(true);
+  const [backend, setBackend] = useState<EngineRuntimeConfig["backend"]>("in-process");
+  const [delegatedEnabled, setDelegatedEnabled] = useState(false);
+  const [delegatedPort, setDelegatedPort] = useState(8080);
+  const [delegatedParallel, setDelegatedParallel] = useState(4);
+  const [delegatedBatching, setDelegatedBatching] = useState(true);
+  const [hotPoolEnabled, setHotPoolEnabled] = useState(true);
+  const [hotPoolMaxModels, setHotPoolMaxModels] = useState(2);
+  const [hotPoolMaxGb, setHotPoolMaxGb] = useState(2);
+  const [iconLabels, setIconLabels] = useState(() => readIconLabels());
+  const [autoWarm, setAutoWarm] = useState(() => readAutoWarm());
+  const [warmStatus, setWarmStatus] = useState<string | undefined>();
   const [benchmark, setBenchmark] = useState<BenchmarkResult | undefined>();
+  const [lastRun, setLastRun] = useState<RunTiming | undefined>();
+  const [comparison, setComparison] = useState<ComparisonResult[]>([]);
   const [queue, setQueue] = useState<QueueStatus | undefined>();
   const [runtimeConfig, setRuntimeConfig] = useState<EngineRuntimeConfig | undefined>();
   const [serverStatus, setServerStatus] = useState<LlamaServerStatus | undefined>();
+  const [hotPool, setHotPool] = useState<HotPoolStatus | undefined>();
+  const [systemScan, setSystemScan] = useState<SystemScan | undefined>();
   const streamRef = useRef<HTMLDivElement>(null);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const warmedTarget = useRef<string | undefined>(undefined);
 
   const isFailed = useCallback(
     (path: string) => failed.some((entry) => entry.toLowerCase() === path.toLowerCase()),
@@ -194,13 +295,19 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       const engine = runtimes.find((runtime) => runtime.id === "llamacpp");
       const ollama = runtimes.find((runtime) => runtime.id === "ollama");
       const nextLoadedModel = engine?.loadedModels?.[0];
-      const [configResult, serverResult, routeResult] = await Promise.allSettled([
+      const [configResult, serverResult, routeResult, queueResult, scanResult, hotPoolResult] = await Promise.allSettled([
         client.engineConfig(),
         client.engineServerStatus(),
-        client.standardRoute()
+        client.standardRoute(),
+        client.queueStatus(),
+        client.systemScan(),
+        client.hotPoolStatus()
       ]);
       if (configResult.status === "fulfilled") setRuntimeConfig(configResult.value.config);
       if (serverResult.status === "fulfilled") setServerStatus(serverResult.value);
+      if (queueResult.status === "fulfilled") setQueue(queueResult.value);
+      if (scanResult.status === "fulfilled") setSystemScan(scanResult.value);
+      if (hotPoolResult.status === "fulfilled") setHotPool(hotPoolResult.value);
       if (routeResult.status === "fulfilled") {
         setStandardRoute(routeResult.value);
         setStandardRouteError(undefined);
@@ -228,14 +335,27 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     try {
       const payload = await client.updateEngineConfig({
         ...(runtimeConfig ?? {}),
+        keepWarm,
         contextSize,
         threads,
         gpuLayers: gpuLayers === -1 ? "auto" : gpuLayers,
         draftModel: draftModelPath || null,
-        backend: runtimeConfig?.backend || "in-process",
-        delegatedServer: runtimeConfig?.delegatedServer || { enabled: false, port: 8080, parallel: 4, continuousBatching: true }
+        backend,
+        delegatedServer: {
+          enabled: delegatedEnabled,
+          port: delegatedPort,
+          parallel: delegatedParallel,
+          continuousBatching: delegatedBatching
+        },
+        hotPool: {
+          enabled: hotPoolEnabled,
+          maxModels: hotPoolMaxModels,
+          maxModelBytes: Math.round(hotPoolMaxGb * 1024 ** 3),
+          autoWarm
+        }
       });
       setRuntimeConfig(payload.config);
+      setRuntimeControlsDirty(false);
       const status = await client.engineServerStatus();
       setServerStatus(status);
     } catch (err) {
@@ -243,7 +363,84 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     } finally {
       setBusy(null);
     }
-  }, [contextSize, draftModelPath, gpuLayers, runtimeConfig, threads]);
+  }, [
+    backend,
+    contextSize,
+    delegatedBatching,
+    delegatedEnabled,
+    delegatedParallel,
+    delegatedPort,
+    draftModelPath,
+    gpuLayers,
+    hotPoolEnabled,
+    hotPoolMaxGb,
+    hotPoolMaxModels,
+    keepWarm,
+    runtimeConfig,
+    threads
+  ]);
+
+  const installLlamaServer = useCallback(async () => {
+    setBusy("Installing llama-server...");
+    setError(undefined);
+    try {
+      const result = await client.installEngineServer({ flavor: "auto" });
+      const status = await client.engineServerStatus();
+      setServerStatus(status);
+      setWarmStatus(result.message);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const startLlamaServer = useCallback(async () => {
+    setBusy("Starting llama-server...");
+    setError(undefined);
+    try {
+      if (runtimeControlsDirty) await saveRuntimeControls();
+      const status = await client.startEngineServer();
+      setServerStatus(status);
+      if (!status.running) setError(status.message);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [runtimeControlsDirty, saveRuntimeControls]);
+
+  const stopLlamaServer = useCallback(async () => {
+    setBusy("Stopping llama-server...");
+    setError(undefined);
+    try {
+      const status = await client.stopEngineServer();
+      setServerStatus(status);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const setIconLabelsPreference = useCallback((next: boolean) => {
+    setIconLabels(next);
+    try {
+      localStorage.setItem(ICON_LABELS_STORAGE_KEY, String(next));
+      window.dispatchEvent(new CustomEvent(ICON_LABELS_EVENT, { detail: next }));
+    } catch {
+      /* storage unavailable; preference still applies for this session */
+    }
+  }, []);
+
+  const setAutoWarmPreference = useCallback((next: boolean) => {
+    setAutoWarm(next);
+    try {
+      localStorage.setItem(AUTO_WARM_STORAGE_KEY, String(next));
+    } catch {
+      /* storage unavailable; preference still applies for this session */
+    }
+  }, []);
 
   const scan = useCallback(async () => {
     setScanning(true);
@@ -260,10 +457,50 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   // Auto-refresh whenever the tab becomes active (e.g. right after a download).
   useEffect(() => {
     if (active) {
-      void refreshStatus();
-      void scan();
+      void (async () => {
+        await refreshStatus();
+        await scan();
+        await refreshStatus();
+      })();
     }
   }, [active, refreshStatus, scan]);
+
+  useEffect(() => {
+    if (!runtimeConfig || runtimeControlsDirty) return;
+    setContextSize(runtimeConfig.contextSize);
+    setThreads(runtimeConfig.threads === "auto" ? defaultThreadCount() : runtimeConfig.threads);
+    setGpuLayers(runtimeConfig.gpuLayers === "auto" ? -1 : runtimeConfig.gpuLayers);
+    setDraftModelPath(runtimeConfig.draftModel || "");
+    setKeepWarm(runtimeConfig.keepWarm);
+    setBackend(runtimeConfig.backend);
+    setDelegatedEnabled(runtimeConfig.delegatedServer.enabled);
+    setDelegatedPort(runtimeConfig.delegatedServer.port);
+    setDelegatedParallel(runtimeConfig.delegatedServer.parallel);
+    setDelegatedBatching(runtimeConfig.delegatedServer.continuousBatching);
+    setHotPoolEnabled(runtimeConfig.hotPool.enabled);
+    setHotPoolMaxModels(runtimeConfig.hotPool.maxModels);
+    setHotPoolMaxGb(Number((runtimeConfig.hotPool.maxModelBytes / 1024 ** 3).toFixed(1)));
+    setAutoWarm(runtimeConfig.hotPool.autoWarm);
+  }, [runtimeConfig, runtimeControlsDirty]);
+
+  useEffect(() => {
+    if (!active) return;
+    let stopped = false;
+    const refreshQueue = async () => {
+      try {
+        const payload = await client.queueStatus();
+        if (!stopped) setQueue(payload);
+      } catch {
+        /* daemon may be restarting */
+      }
+    };
+    void refreshQueue();
+    const timer = setInterval(() => void refreshQueue(), generating ? 1000 : 3000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [active, generating]);
 
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
@@ -289,6 +526,19 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   const shouldUseBackendStandardRoute = !preferLoadedModel && !customOllamaModel && Boolean(backendStandardModel);
   const usingLoadedModel = !shouldUseOllamaModel && !shouldUseBackendStandardRoute && Boolean(loaded);
   const chatReady = shouldUseOllamaModel || shouldUseBackendStandardRoute || usingLoadedModel;
+  const benchmarkTarget = usingLoadedModel ? loaded : shouldUseBackendStandardRoute ? backendStandardModel?.name : undefined;
+  const queueRunning = queue?.running;
+  const queuedItems = queue?.queued ?? [];
+  const showQueue = Boolean(queueRunning) || queuedItems.length > 0;
+  const queueDepth = queuedItems.length + (queueRunning ? 1 : 0);
+  const gpuSummary = systemScan?.gpus?.[0];
+  const runtimeHealth = [
+    available ? "Engine installed" : "Engine missing",
+    gpu ? `GPU ${gpu}` : "CPU path",
+    serverStatus?.running ? `llama-server ${serverStatus.endpoint || "online"}` : "llama-server offline",
+    runtimeConfig?.keepWarm ? "keep-warm on" : "keep-warm off",
+    hotPool?.enabled ? `${hotPool.entries.filter((entry) => entry.state === "ready").length}/${hotPool.maxModels} hot` : "hot pool off"
+  ];
   const assistantLabel = shouldUseOllamaModel
     ? customOllamaModel?.displayName || customOllamaModel?.name || "Model"
     : shouldUseBackendStandardRoute
@@ -302,11 +552,59 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         ? "Standard route unavailable"
         : "Load a model first";
 
+  const applyPreset = useCallback((id: PresetId) => {
+    const next = PRESETS.find((item) => item.id === id);
+    if (!next) return;
+    setPreset(id);
+    setContextSize(next.contextSize);
+    setMaxTokens(next.maxTokens);
+    setTemperature(next.temperature);
+    setRuntimeControlsDirty(true);
+  }, []);
+
+  const readinessForModel = useCallback(
+    (model: DiscoveredModel) => {
+      const notes: string[] = [];
+      let level: "ready" | "active" | "warn" | "blocked" = "ready";
+      const isCurrent =
+        (loadedPath && model.path && loadedPath.toLowerCase() === model.path.toLowerCase()) ||
+        (loaded && loaded.toLowerCase() === model.name.toLowerCase());
+      if (isCurrent) {
+        level = "active";
+        notes.push("active");
+      }
+      if (isFailed(model.path)) {
+        level = "warn";
+        notes.push("failed before");
+      }
+      if (model.source === "Ollama") {
+        notes.push(ollamaOnline ? "Ollama ready" : "Ollama offline");
+        if (!ollamaOnline) level = "warn";
+      } else if (model.sizeBytes > 0) {
+        const gpuFree = gpuSummary?.memoryFreeBytes || gpuSummary?.memoryTotalBytes || 0;
+        if (gpuFree && model.sizeBytes > gpuFree * 0.9) {
+          notes.push("CPU-safe / GPU tight");
+          if (level === "ready") level = "warn";
+        } else if (gpuFree) {
+          notes.push("GPU fit likely");
+        } else {
+          notes.push("CPU runnable");
+        }
+      }
+      if (!available && model.source !== "Ollama") {
+        level = "blocked";
+        notes.push("runtime missing");
+      }
+      return { level, notes: notes.slice(0, 2) };
+    },
+    [available, gpuSummary?.memoryFreeBytes, gpuSummary?.memoryTotalBytes, isFailed, loaded, loadedPath, ollamaOnline]
+  );
+
   const load = useCallback(
     async (request: { artifactId?: string; path?: string }, label: string) => {
       setOpen(false);
       setError(undefined);
-      setBusy(`Loading ${label}… (reads several GB into VRAM on first load)`);
+      setBusy(`Loading ${label}... (reads several GB into VRAM on first load)`);
       try {
         await client.loadEngineModel({
           ...request,
@@ -322,8 +620,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         rememberFailure(request.path, true);
         setError(`Could not load ${label}: ${(err as Error).message}`);
       } finally {
-        // Always re-sync so the loaded pill reflects reality — a failed load now
-        // leaves any previously-loaded model in place, and we must show that.
+        // Always re-sync so the loaded pill reflects reality after a failed load.
         await Promise.all([refreshStatus(), scan()]);
         setBusy(null);
       }
@@ -342,7 +639,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   }, [pendingLoad]);
 
   const unload = useCallback(async () => {
-    setBusy("Unloading…");
+    setBusy("Unloading...");
     try {
       await client.unloadEngineModel();
       await Promise.all([refreshStatus(), scan()]);
@@ -358,7 +655,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     setError(undefined);
     setBusy("Self-healing & upgrading HT Studio Engine to support new architectures...");
     try {
-      const res = await fetch("http://127.0.0.1:3001/api/engine/upgrade", {
+      const res = await fetch(`${client.apiUrl}/api/engine/upgrade`, {
         method: "POST",
         headers: { "x-ht-marketplace-confirm": "privileged-action" }
       });
@@ -382,6 +679,23 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     }
     setGenerating(false);
   }, []);
+
+  const cancelQueueItem = useCallback(
+    async (id: string) => {
+      setError(undefined);
+      try {
+        await client.cancelGeneration(id);
+        const queuePayload = await client.queueStatus();
+        setQueue(queuePayload);
+        if (queue?.running?.id === id || queue?.runningItems?.some((item) => item.id === id)) {
+          stopGeneration();
+        }
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    },
+    [queue, stopGeneration]
+  );
 
   const copyFullChat = useCallback(async () => {
     if (turns.length === 0) return;
@@ -410,28 +724,161 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     setBusy("Running speed check...");
     setError(undefined);
     try {
-      const payload = await client.runBenchmark({ model: usingLoadedModel ? loaded : undefined, prompt: "hi" });
+      const payload = await client.runBenchmark({ model: benchmarkTarget, prompt: "hi" });
       setBenchmark(payload.benchmark);
+      setLastRun({
+        model: payload.benchmark.model,
+        backend: shouldUseBackendStandardRoute ? "standard route" : usingLoadedModel ? "loaded llama.cpp" : "benchmark",
+        firstTokenMs: payload.benchmark.firstTokenMs,
+        totalMs: payload.benchmark.totalMs,
+        tokensApprox: payload.benchmark.tokenCount,
+        tokensPerSecond: payload.benchmark.tokensPerSecond,
+        queueDepthAtStart: queueDepth,
+        generatedAt: new Date().toISOString()
+      });
       const queuePayload = await client.queueStatus();
       setQueue(queuePayload);
+      await refreshStatus();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [loaded, usingLoadedModel]);
+  }, [benchmarkTarget, queueDepth, refreshStatus, shouldUseBackendStandardRoute, usingLoadedModel]);
 
-  const send = useCallback(async () => {
-    const content = input.trim();
+  const warmStandardRoute = useCallback(async (mode: "quiet" | "manual" = "manual") => {
+    if (!benchmarkTarget) return;
+    if (mode === "manual") setBusy("Warming standard route...");
+    setWarmStatus(`Warming ${benchmarkTarget}...`);
+    try {
+      const poolStatus = await client.warmHotPool();
+      setHotPool(poolStatus);
+      const payload = await client.runBenchmark({ model: benchmarkTarget, prompt: "hi" });
+      warmedTarget.current = benchmarkTarget;
+      setBenchmark(payload.benchmark);
+      setLastRun({
+        model: payload.benchmark.model,
+        backend: shouldUseBackendStandardRoute ? "standard route warmup" : "loaded model warmup",
+        firstTokenMs: payload.benchmark.firstTokenMs,
+        totalMs: payload.benchmark.totalMs,
+        tokensApprox: payload.benchmark.tokenCount,
+        tokensPerSecond: payload.benchmark.tokensPerSecond,
+        queueDepthAtStart: queueDepth,
+        generatedAt: new Date().toISOString()
+      });
+      setWarmStatus(`Warm: ${payload.benchmark.model}`);
+    } catch (err) {
+      setWarmStatus(`Warmup skipped: ${(err as Error).message}`);
+      if (mode === "manual") setError((err as Error).message);
+    } finally {
+      if (mode === "manual") setBusy(null);
+    }
+  }, [benchmarkTarget, queueDepth, shouldUseBackendStandardRoute]);
+
+  useEffect(() => {
+    if (!active || !autoWarm || !benchmarkTarget || warmedTarget.current === benchmarkTarget || busy) return;
+    void warmStandardRoute("quiet");
+  }, [active, autoWarm, benchmarkTarget, busy, warmStandardRoute]);
+
+  const optimizeForThisPc = useCallback(async () => {
+    setBusy("Optimizing for this PC...");
+    setError(undefined);
+    try {
+      const scanPayload = await client.systemScan();
+      setSystemScan(scanPayload);
+      const cpuCount = scanPayload.os.cpuCount || defaultThreadCount();
+      const nextThreads = clampUiNumber(Math.max(1, cpuCount - 1), 1, 64);
+      const nextConfig = await client.updateEngineConfig({
+        ...(runtimeConfig ?? {}),
+        keepWarm: true,
+        contextSize: 512,
+        threads: nextThreads,
+        gpuLayers: "auto",
+        draftModel: draftModelPath || null,
+        backend,
+        delegatedServer: {
+          enabled: delegatedEnabled,
+          port: delegatedPort,
+          parallel: delegatedParallel,
+          continuousBatching: delegatedBatching
+        }
+      });
+      setRuntimeConfig(nextConfig.config);
+      setKeepWarm(true);
+      setContextSize(512);
+      setThreads(nextThreads);
+      setGpuLayers(-1);
+      setMaxTokens(96);
+      setTemperature(0.5);
+      setPreset("fast");
+      setRuntimeControlsDirty(false);
+      await refreshStatus();
+      if (benchmarkTarget) await warmStandardRoute("quiet");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [
+    backend,
+    benchmarkTarget,
+    delegatedBatching,
+    delegatedEnabled,
+    delegatedParallel,
+    delegatedPort,
+    draftModelPath,
+    refreshStatus,
+    runtimeConfig,
+    warmStandardRoute
+  ]);
+
+  const runComparison = useCallback(async () => {
+    const candidates = [
+      benchmarkTarget,
+      ...owned.filter((model) => !isFailed(model.path)).map((model) => model.name)
+    ].filter((item): item is string => Boolean(item));
+    const unique = Array.from(new Set(candidates)).slice(0, 3);
+    if (!unique.length) return;
+    setBusy("Comparing local models...");
+    setComparison([]);
+    setError(undefined);
+    try {
+      const results: ComparisonResult[] = [];
+      for (const model of unique) {
+        try {
+          const payload = await client.runBenchmark({ model, prompt: "hi" });
+          results.push({
+            model,
+            ok: payload.benchmark.ok,
+            firstTokenMs: payload.benchmark.firstTokenMs,
+            totalMs: payload.benchmark.totalMs,
+            tokensPerSecond: payload.benchmark.tokensPerSecond,
+            error: payload.benchmark.error
+          });
+        } catch (err) {
+          results.push({ model, ok: false, error: (err as Error).message });
+        }
+        setComparison([...results]);
+      }
+    } finally {
+      setBusy(null);
+      await refreshStatus();
+    }
+  }, [benchmarkTarget, isFailed, owned, refreshStatus]);
+
+  const runChat = useCallback(async (content: string, baseTurns: ChatTurn[]) => {
     if (!content || generating || !chatReady) return;
     setInput("");
-    const history: ChatTurn[] = [...turns, { role: "user", content }];
+    const history: ChatTurn[] = [...baseTurns, { role: "user", content }];
     setTurns([...history, { role: "assistant", content: "" }]);
     setGenerating(true);
     setError(undefined);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    const startedAt = performance.now();
+    const queueDepthAtStart = queueDepth;
+    let firstTokenMs: number | undefined;
 
     try {
       const request =
@@ -441,10 +888,10 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
               model: customOllamaModel.name,
               stream: true,
               keep_alive: STANDARD_KEEP_ALIVE,
-              options: { num_ctx: STANDARD_CONTEXT, num_predict: maxTokens, temperature: 0.7 },
+              options: { num_ctx: STANDARD_CONTEXT, num_predict: maxTokens, temperature },
               messages: history
             }
-          : { runtime: "llamacpp", stream: true, messages: history, maxTokens, temperature: 0.7 };
+          : { runtime: "llamacpp", stream: true, messages: history, maxTokens, temperature };
       const response = await client.chat(request, { signal: controller.signal });
       if (!response.ok || !response.body) throw new Error(`Chat failed with ${response.status}`);
       const reader = response.body.getReader();
@@ -492,6 +939,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
           const piece = parsed.message?.content ?? "";
           const thinkingPiece = parsed.message?.thinking ?? (parsed.message as any)?.reasoning_content ?? "";
           if (piece || thinkingPiece) {
+            if (firstTokenMs === undefined) firstTokenMs = Math.round(performance.now() - startedAt);
             if (piece) assistant += piece;
             if (thinkingPiece) assistantThinking += thinkingPiece;
             scheduleAssistant();
@@ -499,7 +947,30 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         }
       }
       if (raf) cancelAnimationFrame(raf);
-      applyAssistant(assistant, assistantThinking);
+      const totalMs = Math.round(performance.now() - startedAt);
+      const tokensApprox = estimateTokens(assistant);
+      const timing: RunTiming = {
+        model: assistantLabel,
+        backend: shouldUseOllamaModel ? "Ollama" : shouldUseBackendStandardRoute ? "standard route" : "loaded llama.cpp",
+        firstTokenMs,
+        totalMs,
+        tokensApprox,
+        tokensPerSecond: Number((tokensApprox / Math.max(totalMs / 1000, 0.001)).toFixed(2)),
+        queueDepthAtStart,
+        generatedAt: new Date().toISOString()
+      };
+      setLastRun(timing);
+      setTurns((current) => {
+        const copy = [...current];
+        copy[copy.length - 1] = {
+          role: "assistant",
+          content: assistant,
+          thinking: assistantThinking || undefined,
+          timing,
+          preset
+        };
+        return copy;
+      });
     } catch (err) {
       if ((err as Error).name === "AbortError" || (err as Error).message?.includes("aborted")) {
         // Ignored
@@ -511,7 +982,62 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       abortControllerRef.current = null;
       void refreshStatus();
     }
-  }, [input, generating, chatReady, turns, shouldUseOllamaModel, customOllamaModel, maxTokens, refreshStatus]);
+  }, [
+    assistantLabel,
+    chatReady,
+    customOllamaModel,
+    generating,
+    maxTokens,
+    preset,
+    queueDepth,
+    refreshStatus,
+    shouldUseBackendStandardRoute,
+    shouldUseOllamaModel,
+    temperature
+  ]);
+
+  const send = useCallback(async () => {
+    await runChat(input.trim(), turns);
+  }, [input, runChat, turns]);
+
+  const regenerateLast = useCallback(async () => {
+    const lastUserIndex = turns.map((turn) => turn.role).lastIndexOf("user");
+    if (lastUserIndex < 0) return;
+    const prompt = turns[lastUserIndex].content;
+    await runChat(prompt, turns.slice(0, lastUserIndex));
+  }, [runChat, turns]);
+
+  const editUserTurn = useCallback((index: number) => {
+    const turn = turns[index];
+    if (!turn || turn.role !== "user") return;
+    setInput(turn.content);
+    setTurns(turns.slice(0, index));
+  }, [turns]);
+
+  const branchAt = useCallback((index: number) => {
+    setTurns(turns.slice(0, index + 1));
+  }, [turns]);
+
+  const clearChat = useCallback(() => {
+    stopGeneration();
+    setTurns([]);
+    setInput("");
+    setLastRun(undefined);
+  }, [stopGeneration]);
+
+  const exportChat = useCallback(() => {
+    if (!turns.length) return;
+    const body = turns
+      .map((turn) => `${turn.role === "user" ? "User" : assistantLabel}: ${turn.content}`)
+      .join("\n\n");
+    const blob = new Blob([body], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ht-studio-chat-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [assistantLabel, turns]);
 
   return (
     <div className="run-console">
@@ -521,8 +1047,8 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
           <p className="run-sub">Private local model workspace running in-process.</p>
         </div>
         <div className="run-status">
-          {available === null && <span className="pill pill-muted">Checking HT Studio…</span>}
-          {available === true && <span className="pill pill-ok">HT Studio ready{gpu ? ` · GPU: ${gpu}` : " · CPU"}</span>}
+          {available === null && <span className="pill pill-muted">Checking HT Studio...</span>}
+          {available === true && <span className="pill pill-ok">HT Studio ready{gpu ? ` / GPU: ${gpu}` : " / CPU"}</span>}
           {available === false && <span className="pill pill-bad">HT Studio unavailable</span>}
           {loaded ? (
             <span className="pill pill-loaded" title={loaded}>
@@ -546,20 +1072,93 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
               Unload
             </button>
           )}
+          <button
+            className="run-btn ghost small"
+            type="button"
+            onClick={() => setIconLabelsPreference(!iconLabels)}
+            title="Toggle decorative icons in HT Studio labels"
+          >
+            Icons {iconLabels ? "on" : "off"}
+          </button>
+          <button
+            className="run-btn ghost small"
+            type="button"
+            onClick={() => setAutoWarmPreference(!autoWarm)}
+            title="Warm the standard route automatically when HT Studio opens"
+          >
+            Warm {autoWarm ? "on" : "off"}
+          </button>
         </div>
       </header>
+
+      <section className="run-peak-grid">
+        <div className="run-telemetry-panel">
+          <div className="run-panel-head">
+            <span className="run-owned-label">Latency dashboard</span>
+            <span className="run-mini-pill">{warmStatus || "No warmup yet"}</span>
+          </div>
+          <div className="run-metric-grid">
+            <span><strong>{formatLatency(lastRun?.firstTokenMs ?? benchmark?.firstTokenMs)}</strong><small>first token</small></span>
+            <span><strong>{formatLatency(lastRun?.totalMs ?? benchmark?.totalMs)}</strong><small>total</small></span>
+            <span><strong>{lastRun?.tokensPerSecond ?? benchmark?.tokensPerSecond ?? "n/a"}</strong><small>tok/s</small></span>
+            <span><strong>{queueDepth}</strong><small>queue depth</small></span>
+          </div>
+          <p className="run-sub">
+            Backend: {lastRun?.backend || (shouldUseBackendStandardRoute ? "standard route" : usingLoadedModel ? "loaded llama.cpp" : "not selected")} | Model: {lastRun?.model || benchmarkTarget || "none"}
+          </p>
+        </div>
+        <div className="run-telemetry-panel">
+          <div className="run-panel-head">
+            <span className="run-owned-label">Runtime health</span>
+            <button className="run-btn ghost small" type="button" onClick={() => void optimizeForThisPc()} disabled={Boolean(busy)}>
+              Optimize for my PC
+            </button>
+          </div>
+          <div className="run-health-list">
+            {runtimeHealth.map((item) => <span key={item}>{item}</span>)}
+          </div>
+          <p className="run-sub">
+            {gpuSummary
+              ? `${gpuSummary.name}${gpuSummary.memoryFreeBytes ? ` / ${formatBytes(gpuSummary.memoryFreeBytes)} free VRAM` : ""}`
+              : systemScan
+                ? `${systemScan.os.cpuCount} CPU threads available`
+                : "System scan pending"}
+          </p>
+          {hotPool && hotPool.entries.length > 0 && (
+            <p className="run-sub">
+              Hot pool: {hotPool.entries.map((entry) => `${entry.model} (${entry.state})`).join(" | ")}
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="run-presets">
+        <span className="run-owned-label">Conversation preset</span>
+        <div className="run-preset-buttons">
+          {PRESETS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`run-btn small ${preset === item.id ? "active" : "ghost"}`}
+              onClick={() => applyPreset(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </section>
 
       {error && (
         <div className="run-error" style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "flex-start" }}>
           <span>{error}</span>
-          {(error.includes("needs llama.cpp") || error.includes("llama.cpp ≥") || error.includes("engine") || error.includes("Failed to load") || error.includes("Failure")) && (
+          {(error.includes("needs llama.cpp") || error.includes("llama.cpp >=") || error.includes("engine") || error.includes("Failed to load") || error.includes("Failure")) && (
             <button
               className="run-btn active"
               style={{ background: "var(--ht-accent, #5b9dff)", border: "none", color: "#fff", padding: "6px 12px", borderRadius: "4px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
               onClick={() => void handleSelfHeal()}
               disabled={Boolean(busy)}
             >
-              ⚡ Self-Heal & Upgrade Engine
+              {iconLabels ? `${RUN_ICONS.bolt} ` : ""}Self-Heal & Upgrade Engine
             </button>
           )}
         </div>
@@ -571,15 +1170,62 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
           <span className="run-owned-label">Speed metrics</span>
           <p className="run-sub">
             {benchmark
-              ? `${benchmark.model}: ${benchmark.firstTokenMs}ms first token, ${benchmark.totalMs}ms total, ${benchmark.tokensPerSecond} tok/s`
-              : "Run a short benchmark against the loaded local model."}
+              ? `${benchmark.model}: ${
+                  benchmark.ok
+                    ? `${benchmark.firstTokenMs}ms first token, ${benchmark.totalMs}ms total, ${benchmark.tokensPerSecond} tok/s`
+                    : `failed - ${benchmark.error || "unknown error"}`
+                }`
+              : benchmarkTarget
+                ? `Run a short benchmark against ${benchmarkTarget}.`
+                : "Load a local chat model or let standard routing select one before benchmarking."}
           </p>
-          {queue?.running && <p className="run-sub">Queue running: {queue.running.label}</p>}
         </div>
-        <button className="run-btn secondary small" onClick={() => void runSpeedCheck()} disabled={Boolean(busy) || !usingLoadedModel}>
+        <button className="run-btn secondary small" onClick={() => void runSpeedCheck()} disabled={Boolean(busy) || !benchmarkTarget}>
           Speed check
         </button>
+        <button className="run-btn ghost small" onClick={() => void warmStandardRoute("manual")} disabled={Boolean(busy) || !benchmarkTarget}>
+          Warm now
+        </button>
+        <button className="run-btn ghost small" onClick={() => void runComparison()} disabled={Boolean(busy) || (!benchmarkTarget && owned.length === 0)}>
+          Compare models
+        </button>
       </section>
+
+      {comparison.length > 0 && (
+        <section className="run-comparison">
+          <span className="run-owned-label">Model comparison</span>
+          <div className="run-comparison-rows">
+            {comparison.map((item) => (
+              <div key={item.model} className={`run-comparison-row${item.ok ? "" : " failed"}`}>
+                <strong>{formatModelName(item.model)}</strong>
+                <span>{item.ok ? `${formatLatency(item.firstTokenMs)} first / ${formatLatency(item.totalMs)} total / ${item.tokensPerSecond} tok/s` : item.error || "failed"}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {showQueue && (
+        <section className="run-queue">
+          <div>
+            <span className="run-owned-label">Generation queue</span>
+            {queueRunning && <p className="run-sub">Running: {queueRunning.label}</p>}
+            {queuedItems.length > 0 && <p className="run-sub">Queued: {queuedItems.length}</p>}
+          </div>
+          <div className="run-queue-actions">
+            {queueRunning && (
+              <button className="run-btn ghost small" onClick={() => void cancelQueueItem(queueRunning.id)}>
+                Cancel running
+              </button>
+            )}
+            {queuedItems.slice(0, 2).map((item) => (
+              <button key={item.id} className="run-btn ghost small" onClick={() => void cancelQueueItem(item.id)}>
+                Cancel {item.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {owned.length > 0 && (
         <section className="run-owned">
@@ -588,16 +1234,19 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
             {owned.map((model) => {
               const isCurrent = (loadedPath && model.path && loadedPath.toLowerCase() === model.path.toLowerCase()) || 
                                 (loaded && loaded.toLowerCase() === model.name.toLowerCase());
+              const readiness = readinessForModel(model);
               return (
                 <button
                   key={model.path}
                   className={`run-chip${isCurrent ? " active" : ""}${isFailed(model.path) ? " failed" : ""}`}
                   disabled={Boolean(busy)}
-                  title={isFailed(model.path) ? "Failed to load before — may need a newer engine" : model.path}
+                  title={`${readiness.notes.join(" / ") || "ready"} - ${model.path}`}
                   onClick={() => void load({ path: model.path }, model.name)}
                 >
-                  {isCurrent ? "●" : "▶"} {formatModelName(model.name)}
+                  {iconLabels ? `${isCurrent ? RUN_ICONS.active : RUN_ICONS.play} ` : ""}
+                  {isCurrent ? "Active" : "Load"} {formatModelName(model.name)}
                   <span className="run-chip-size">{formatBytes(model.sizeBytes)}</span>
+                  {readiness.notes[0] && <span className={`run-chip-state ${readiness.level}`}>{readiness.notes[0]}</span>}
                   {isCurrent && <span className="run-chip-active-badge">active</span>}
                 </button>
               );
@@ -609,7 +1258,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       <section className="run-loader">
         <div className="run-loader-head">
           <span className="run-loader-title">
-            {scanning ? "Scanning your system…" : `${models.length} model${models.length === 1 ? "" : "s"} found on this system`}
+            {scanning ? "Scanning your system..." : `${models.length} model${models.length === 1 ? "" : "s"} found on this system`}
           </span>
           <button className="run-btn ghost small" onClick={() => void scan()} disabled={scanning || Boolean(busy)}>
             Rescan
@@ -619,7 +1268,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         <div className="run-combo">
           <input
             className="run-search"
-            placeholder={models.length ? "Search models by name, family, or folder…" : "No models found — load by path below"}
+            placeholder={models.length ? "Search models by name, family, or folder..." : "No models found - load by path below"}
             value={query}
             disabled={Boolean(busy)}
             onChange={(event) => {
@@ -647,55 +1296,62 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 if (blurTimer.current) clearTimeout(blurTimer.current);
               }}
             >
-              {filtered.map((model) => (
-                <li key={model.path}>
-                  <button
-                    className="run-option"
-                    disabled={Boolean(busy)}
-                    onClick={() => {
-                      setQuery(model.name);
-                      if (model.source === "Ollama") {
-                        setCustomOllamaModel({
-                          id: model.name,
-                          name: model.name,
-                          displayName: model.name,
-                          runtime: "ollama"
-                        });
-                        setPreferLoadedModel(false);
-                        setOpen(false);
-                      } else {
-                        void load({ path: model.path }, model.name);
-                      }
-                    }}
-                  >
-                    <span className="run-option-main">
-                      <span className="run-option-name">{formatModelName(model.name)}</span>
-                      {model.loaded && <span className="run-tag loaded">loaded</span>}
-                      {isFailed(model.path) && <span className="run-tag warn">⚠ failed before</span>}
-                    </span>
-                    <span className="run-option-meta">
-                      <span className="run-tag">{model.source}</span>
-                      <span className="run-option-dir">{model.dir}</span>
-                      <span className="run-option-size">{formatBytes(model.sizeBytes)}</span>
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {filtered.map((model) => {
+                const readiness = readinessForModel(model);
+                return (
+                  <li key={model.path}>
+                    <button
+                      className="run-option"
+                      disabled={Boolean(busy) || readiness.level === "blocked"}
+                      onClick={() => {
+                        setQuery(model.name);
+                        if (model.source === "Ollama") {
+                          setCustomOllamaModel({
+                            id: model.name,
+                            name: model.name,
+                            displayName: model.name,
+                            runtime: "ollama"
+                          });
+                          setPreferLoadedModel(false);
+                          setOpen(false);
+                        } else {
+                          void load({ path: model.path }, model.name);
+                        }
+                      }}
+                    >
+                      <span className="run-option-main">
+                        <span className="run-option-name">{formatModelName(model.name)}</span>
+                        {model.loaded && <span className="run-tag loaded">loaded</span>}
+                        {readiness.notes.map((note) => (
+                          <span key={note} className={`run-tag ${readiness.level === "warn" ? "warn" : readiness.level}`}>
+                            {note === "failed before" && iconLabels ? `${RUN_ICONS.warning} ` : ""}{note}
+                          </span>
+                        ))}
+                      </span>
+                      <span className="run-option-meta">
+                        <span className="run-tag">{model.source}</span>
+                        <span className="run-option-dir">{model.dir}</span>
+                        <span className="run-option-size">{formatBytes(model.sizeBytes)}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
 
-        <details className="run-advanced" style={{ marginTop: '12px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '8px', padding: '10px 14px' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: '13px', color: 'var(--ht-muted)' }}>
-            ⚙️ Advanced Engine Optimization Parameters
-          </summary>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px', marginTop: '12px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--ht-muted)', fontWeight: 600 }}>Context size (tokens)</label>
+        <details className="run-advanced run-runtime-panel">
+          <summary>Advanced engine controls</summary>
+          <div className="run-runtime-grid">
+            <label className="run-field">
+              <span>Context size (tokens)</span>
               <select 
                 value={contextSize} 
-                onChange={(e) => setContextSize(Number(e.target.value))}
-                style={{ background: 'var(--ht-control-bg, rgba(20, 24, 30, 0.9))', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--ht-text)', borderRadius: '4px', padding: '4px 8px', fontSize: '12px' }}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setContextSize(Number(e.target.value));
+                }}
               >
                 <option value={512}>512 (Ultra Light/Fast)</option>
                 <option value={1024}>1024 (Lightweight)</option>
@@ -703,24 +1359,28 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 <option value={4096}>4096 (Expanded)</option>
                 <option value={8192}>8192 (Detailed)</option>
               </select>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--ht-muted)', fontWeight: 600 }}>CPU threads</label>
+            </label>
+            <label className="run-field">
+              <span>CPU threads</span>
               <input 
                 type="number" 
                 min={1} 
                 max={64} 
                 value={threads} 
-                onChange={(e) => setThreads(Number(e.target.value))}
-                style={{ background: 'var(--ht-control-bg, rgba(20, 24, 30, 0.9))', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--ht-text)', borderRadius: '4px', padding: '4px 8px', fontSize: '12px' }}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setThreads(clampUiNumber(Number(e.target.value), 1, 64));
+                }}
               />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--ht-muted)', fontWeight: 600 }}>GPU offload layers</label>
+            </label>
+            <label className="run-field">
+              <span>GPU offload layers</span>
               <select 
                 value={gpuLayers} 
-                onChange={(e) => setGpuLayers(Number(e.target.value))}
-                style={{ background: 'var(--ht-control-bg, rgba(20, 24, 30, 0.9))', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--ht-text)', borderRadius: '4px', padding: '4px 8px', fontSize: '12px' }}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setGpuLayers(Number(e.target.value));
+                }}
               >
                 <option value={-1}>Auto (Optimal)</option>
                 <option value={0}>0 (CPU Only)</option>
@@ -728,13 +1388,12 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 <option value={32}>32 layers</option>
                 <option value={64}>64 layers (Max VRAM)</option>
               </select>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '11px', color: 'var(--ht-muted)', fontWeight: 600 }}>Response cap</label>
+            </label>
+            <label className="run-field">
+              <span>Response cap</span>
               <select
                 value={maxTokens}
                 onChange={(e) => setMaxTokens(Number(e.target.value))}
-                style={{ background: 'var(--ht-control-bg, rgba(20, 24, 30, 0.9))', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--ht-text)', borderRadius: '4px', padding: '4px 8px', fontSize: '12px' }}
               >
                 <option value={32}>32 tokens</option>
                 <option value={96}>96 tokens</option>
@@ -744,30 +1403,169 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 <option value={2048}>2048 tokens (Detailed)</option>
                 <option value={4096}>4096 tokens (Maximum)</option>
               </select>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', gridColumn: 'span 2' }}>
-              <label style={{ fontSize: '11px', color: 'var(--ht-muted)', fontWeight: 600 }}>Speculative Draft Model (2x-3x Speedup)</label>
+            </label>
+            <label className="run-field">
+              <span>Temperature</span>
+              <input
+                type="number"
+                min={0}
+                max={1.5}
+                step={0.1}
+                value={temperature}
+                onChange={(e) => setTemperature(Math.min(1.5, Math.max(0, Number(e.target.value))))}
+              />
+            </label>
+            <label className="run-field run-field-wide">
+              <span>Speculative draft model</span>
               <select 
                 value={draftModelPath} 
-                onChange={(e) => setDraftModelPath(e.target.value)}
-                style={{ background: 'var(--ht-control-bg, rgba(20, 24, 30, 0.9))', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--ht-text)', borderRadius: '4px', padding: '4px 8px', fontSize: '12px' }}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setDraftModelPath(e.target.value);
+                }}
               >
                 <option value="">None (Standard inference)</option>
                 {draftModels.map((m) => (
                   <option key={m.path} value={m.path}>
-                    🚀 {formatModelName(m.name)} ({formatBytes(m.sizeBytes)})
+                    {iconLabels ? `${RUN_ICONS.rocket} ` : ""}{formatModelName(m.name)} ({formatBytes(m.sizeBytes)})
                   </option>
                 ))}
               </select>
-            </div>
+            </label>
+            <label className="run-field">
+              <span>Backend</span>
+              <select
+                value={backend}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setBackend(e.target.value as EngineRuntimeConfig["backend"]);
+                }}
+              >
+                <option value="in-process">In-process</option>
+                <option value="delegated-server">Delegated llama-server</option>
+              </select>
+            </label>
+            <label className="run-check-field">
+              <input
+                type="checkbox"
+                checked={keepWarm}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setKeepWarm(e.target.checked);
+                }}
+              />
+              <span>Keep model warm</span>
+            </label>
+            <label className="run-check-field">
+              <input
+                type="checkbox"
+                checked={delegatedEnabled}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setDelegatedEnabled(e.target.checked);
+                }}
+              />
+              <span>Enable delegated server</span>
+            </label>
+            <label className="run-check-field">
+              <input
+                type="checkbox"
+                checked={delegatedBatching}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setDelegatedBatching(e.target.checked);
+                }}
+              />
+              <span>Continuous batching</span>
+            </label>
+            <label className="run-check-field">
+              <input
+                type="checkbox"
+                checked={hotPoolEnabled}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setHotPoolEnabled(e.target.checked);
+                }}
+              />
+              <span>Hot model pool</span>
+            </label>
+            <label className="run-field">
+              <span>Delegated port</span>
+              <input
+                type="number"
+                min={1024}
+                max={65535}
+                value={delegatedPort}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setDelegatedPort(clampUiNumber(Number(e.target.value), 1024, 65535));
+                }}
+              />
+            </label>
+            <label className="run-field">
+              <span>Parallel slots</span>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                value={delegatedParallel}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setDelegatedParallel(clampUiNumber(Number(e.target.value), 1, 16));
+                }}
+              />
+            </label>
+            <label className="run-field">
+              <span>Hot models</span>
+              <input
+                type="number"
+                min={1}
+                max={4}
+                value={hotPoolMaxModels}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setHotPoolMaxModels(clampUiNumber(Number(e.target.value), 1, 4));
+                }}
+              />
+            </label>
+            <label className="run-field">
+              <span>Max hot model GB</span>
+              <input
+                type="number"
+                min={0.1}
+                max={20}
+                step={0.1}
+                value={hotPoolMaxGb}
+                onChange={(e) => {
+                  setRuntimeControlsDirty(true);
+                  setHotPoolMaxGb(Math.min(20, Math.max(0.1, Number(e.target.value))));
+                }}
+              />
+            </label>
           </div>
-          <p style={{ margin: '8px 0 0', fontSize: '10px', color: 'var(--ht-muted)', opacity: 0.85, lineHeight: 1.3 }}>
-            💡 *Tip: Lowering context size to 512/1024 tokens reduces load times. Activating a Speculative Draft Model accelerates heavy model inference by up to 2x-3x by predicting tokens in parallel.*
+          <p className="run-runtime-tip">
+            {iconLabels ? `${RUN_ICONS.bulb} ` : ""}Tip: lower context size to 512 or 1024 for faster simple prompts. A compatible draft model can speed up heavier models when the backend supports speculative decoding.
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
-            <small style={{ color: 'var(--ht-muted)' }}>
-              Runtime config: {runtimeConfig?.backend || "in-process"} | delegated server {serverStatus?.running ? "running" : "offline"}
+          <div className="run-runtime-actions">
+            <small>
+              Runtime config: {runtimeConfig?.backend || "in-process"} | delegated server {serverStatus?.running ? "running" : serverStatus?.available ? "ready" : "missing"}
+              {runtimeControlsDirty ? " | unsaved changes" : ""}
             </small>
+            {!serverStatus?.available && (
+              <button className="run-btn secondary small" type="button" onClick={() => void installLlamaServer()} disabled={Boolean(busy)}>
+                Install llama-server
+              </button>
+            )}
+            {serverStatus?.available && !serverStatus.running && (
+              <button className="run-btn secondary small" type="button" onClick={() => void startLlamaServer()} disabled={Boolean(busy)}>
+                Start llama-server
+              </button>
+            )}
+            {serverStatus?.running && (
+              <button className="run-btn ghost small" type="button" onClick={() => void stopLlamaServer()} disabled={Boolean(busy)}>
+                Stop llama-server
+              </button>
+            )}
             <button className="run-btn secondary small" type="button" onClick={() => void saveRuntimeControls()} disabled={Boolean(busy)}>
               Save runtime controls
             </button>
@@ -795,44 +1593,34 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       </section>
 
       <section className="run-chat">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px', padding: '0 4px' }}>
-          <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, color: 'var(--ht-muted)' }}>
+        <div className="run-chat-toolbar">
+          <span>
             Console Chat Stream
           </span>
-          {turns.length > 0 && (
+          <div className="run-chat-actions">
+            {turns.length > 0 && (
+              <>
+                <button className="run-btn ghost small" type="button" onClick={() => void regenerateLast()} disabled={generating}>
+                  Regenerate
+                </button>
+                <button className="run-btn ghost small" type="button" onClick={exportChat}>
+                  Export
+                </button>
+                <button className="run-btn ghost small" type="button" onClick={clearChat}>
+                  Clear
+                </button>
+              </>
+            )}
             <button
               onClick={copyFullChat}
+              className="run-copy-transcript"
+              disabled={turns.length === 0}
               title="Copy the entire conversation transcript to your clipboard in Markdown format"
-              style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                color: 'var(--ht-muted)',
-                borderRadius: '6px',
-                padding: '4px 10px',
-                cursor: 'pointer',
-                fontSize: '0.75rem',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'all 0.15s ease-in-out',
-                backdropFilter: 'blur(4px)',
-                fontWeight: 500
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                e.currentTarget.style.color = 'var(--ht-cyan)';
-                e.currentTarget.style.borderColor = 'var(--ht-accent-line)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                e.currentTarget.style.color = 'var(--ht-muted)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-              }}
             >
               {fullChatCopied ? (
                 <>
                   <CheckIcon />
-                  <span style={{ color: 'var(--ht-cyan)' }}>Copied Transcript!</span>
+                  <span>Copied Transcript!</span>
                 </>
               ) : (
                 <>
@@ -841,7 +1629,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 </>
               )}
             </button>
-          )}
+          </div>
         </div>
         <div className="run-stream" ref={streamRef}>
           {turns.length === 0 && (
@@ -856,6 +1644,16 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 {turn.role === "assistant" && turn.content && (
                   <CopyButton text={turn.content} />
                 )}
+                <div className="run-turn-actions">
+                  {turn.role === "user" && (
+                    <button type="button" onClick={() => editUserTurn(index)} disabled={generating}>
+                      Edit
+                    </button>
+                  )}
+                  <button type="button" onClick={() => branchAt(index)} disabled={generating || index === turns.length - 1}>
+                    Branch
+                  </button>
+                </div>
                 {turn.role === "assistant" && showThinking && (
                   <details className="run-thinking-container" open={generating && isLast}>
                     <summary className="run-thinking-summary">
@@ -866,8 +1664,13 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                   </details>
                 )}
                 <div className="run-text">
-                  {turn.content || (generating && isLast ? (showThinking ? "Writing response..." : "…") : "")}
+                  {turn.content || (generating && isLast ? (showThinking ? "Writing response..." : "...") : "")}
                 </div>
+                {turn.role === "assistant" && turn.timing && (
+                  <div className="run-turn-timing">
+                    {formatLatency(turn.timing.firstTokenMs)} first token | {formatLatency(turn.timing.totalMs)} total | {turn.timing.tokensPerSecond} tok/s | {turn.timing.backend}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -893,7 +1696,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
           />
           {generating ? (
             <button className="run-btn stop" style={{ background: "rgba(239, 68, 68, 0.9)", border: "none", color: "#fff", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }} onClick={stopGeneration}>
-              ⏹ Stop
+              {iconLabels ? `${RUN_ICONS.stop} ` : ""}Stop
             </button>
           ) : (
             <button className="run-btn send" disabled={!chatReady || !input.trim()} onClick={() => void send()}>

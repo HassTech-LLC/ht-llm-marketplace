@@ -9,9 +9,9 @@ export function chooseStandardModel(
   benchmarks: BenchmarkResult[] = [],
   options: RouteOptions = {}
 ): StandardRouteDecision {
-  const runnable = models.filter((model) => model.runnable);
+  const runnable = models.filter((model) => model.runnable && isChatModel(model));
   if (runnable.length === 0) {
-    return { selected: null, reason: "No runnable local models are indexed.", candidates: [] };
+    return { selected: null, reason: "No runnable local chat models are indexed.", candidates: [] };
   }
 
   const candidates = runnable
@@ -85,4 +85,10 @@ function normalize(value: string) {
 
 function isVirtualModel(model: ModelIndexEntry) {
   return model.path.startsWith("virtual:") || model.source.toLowerCase().includes("virtual");
+}
+
+function isChatModel(model: ModelIndexEntry) {
+  if (!isVirtualModel(model) && model.sizeBytes < 1_000_000) return false;
+  const haystack = `${model.name} ${model.id} ${model.path} ${model.source}`.toLowerCase();
+  return !/(^|[^a-z])(embed|embedding|embeddings|nomic|bge|e5|gte|jina-embeddings|sentence-transformers|clip|llava|bakllava|moondream|vision)([^a-z]|$)/.test(haystack);
 }

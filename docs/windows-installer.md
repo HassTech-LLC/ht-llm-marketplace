@@ -14,4 +14,4 @@ The uninstall flow removes app binaries, desktop shell settings, and background 
 
 ## Migration
 
-If the model directory changes, run `htlm doctor` and `htlm list` before moving files. Move only artifacts returned by daemon inventory or delete-plan proof.
+If the model directory changes, run `htlm doctor` and `htlm list` before moving files. Move only artifacts returned by daemon inventory or delete-plan evidence.

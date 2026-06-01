@@ -191,7 +191,7 @@ function printHelp() {
   console.log("  htlm pull <ref|repo>      Pull an Ollama-library ref or smallest HF GGUF");
   console.log("  htlm run <model> [prompt] Run a local model through the daemon");
   console.log("  htlm list                 List indexed local runnable models");
-  console.log("  htlm rm <model|id>        Delete a marketplace-owned artifact with proof");
+  console.log("  htlm rm <model|id>        Delete a marketplace-owned artifact with evidence");
   console.log("  htlm bench [model]        Run a short local benchmark");
   console.log("  htlm doctor               Print live local scanner output");
   console.log("  htlm inventory            Print local inventory");

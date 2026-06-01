@@ -14,6 +14,12 @@ export function defaultRuntimeConfig(): EngineRuntimeConfig {
       port: 8080,
       parallel: 4,
       continuousBatching: true
+    },
+    hotPool: {
+      enabled: true,
+      maxModels: 2,
+      maxModelBytes: 2_000_000_000,
+      autoWarm: true
     }
   };
 }
@@ -25,6 +31,7 @@ export function sanitizeRuntimeConfig(
   const current = defaultRuntimeConfig();
   const source = isObject(input) ? input : {};
   const delegatedInput = isObject(source.delegatedServer) ? source.delegatedServer : {};
+  const hotPoolInput = isObject(source.hotPool) ? source.hotPool : {};
   const draftModel = typeof source.draftModel === "string" && source.draftModel.trim() ? source.draftModel.trim() : null;
   if (draftModel && options.knownModelPaths && !options.knownModelPaths.includes(draftModel)) {
     throw new Error("Draft model is not in the local model index");
@@ -42,6 +49,12 @@ export function sanitizeRuntimeConfig(
       port: clampNumber(delegatedInput.port, 1024, 65_535, current.delegatedServer.port),
       parallel: clampNumber(delegatedInput.parallel, 1, 16, current.delegatedServer.parallel),
       continuousBatching: delegatedInput.continuousBatching !== false
+    },
+    hotPool: {
+      enabled: hotPoolInput.enabled !== false,
+      maxModels: clampNumber(hotPoolInput.maxModels, 1, 4, current.hotPool.maxModels),
+      maxModelBytes: clampNumber(hotPoolInput.maxModelBytes, 100_000_000, 20_000_000_000, current.hotPool.maxModelBytes),
+      autoWarm: hotPoolInput.autoWarm !== false
     }
   };
 }

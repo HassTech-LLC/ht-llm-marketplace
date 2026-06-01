@@ -1,14 +1,16 @@
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const root = process.cwd();
-const smokeRoot = path.resolve(root, "artifacts", "package-smoke");
+const smokeParent = path.join(os.tmpdir(), "htlm-package-smoke");
+fs.mkdirSync(smokeParent, { recursive: true });
+const smokeRoot = fs.mkdtempSync(path.join(smokeParent, "run-"));
 const tarballDir = path.join(smokeRoot, "tarballs");
 
-assertInsideWorkspace(smokeRoot);
-fs.rmSync(smokeRoot, { recursive: true, force: true });
+assertInsideSmokeParent(smokeRoot);
 fs.mkdirSync(tarballDir, { recursive: true });
 
 const npm = npmInvocation();
@@ -21,7 +23,7 @@ const packages = [
 ];
 
 for (const workspace of packages) {
-  runNpm(["pack", "--pack-destination", path.relative(root, tarballDir), "-w", workspace], root);
+  runNpm(["pack", "--pack-destination", tarballDir, "-w", workspace], root);
 }
 
 const tarballs = fs.readdirSync(tarballDir)
@@ -77,8 +79,9 @@ try {
   await stopDaemon(daemon);
 }
 
-console.log(`package smoke ok: installed ${tarballs.length} tarballs and started daemon on ${port}`);
-cleanupSmokeRoot();
+const installedTarballCount = tarballs.length;
+await cleanupSmokeRoot();
+console.log(`package smoke ok: installed ${installedTarballCount} tarballs and started daemon on ${port}`);
 
 function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
@@ -121,19 +124,29 @@ function npmInvocation() {
   return { command: "npm", args: [], shell: true };
 }
 
-function assertInsideWorkspace(target) {
-  const relative = path.relative(root, target);
+function assertInsideSmokeParent(target) {
+  const relative = path.relative(smokeParent, target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`Refusing to clear path outside workspace: ${target}`);
+    throw new Error(`Refusing to clear path outside package smoke temp root: ${target}`);
   }
 }
 
-function cleanupSmokeRoot() {
-  assertInsideWorkspace(smokeRoot);
-  fs.rmSync(smokeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
-  const artifactsDir = path.dirname(smokeRoot);
-  if (path.basename(artifactsDir) === "artifacts" && fs.existsSync(artifactsDir) && fs.readdirSync(artifactsDir).length === 0) {
-    fs.rmdirSync(artifactsDir);
+async function cleanupSmokeRoot() {
+  assertInsideSmokeParent(smokeRoot);
+  for (let attempt = 1; attempt <= 30; attempt += 1) {
+    try {
+      fs.rmSync(smokeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+      break;
+    } catch (error) {
+      if (attempt === 30) throw error;
+      await delay(250);
+    }
+  }
+  if (fs.existsSync(smokeRoot)) {
+    throw new Error(`Package smoke cleanup left ${smokeRoot}`);
+  }
+  if (fs.existsSync(smokeParent) && fs.readdirSync(smokeParent).length === 0) {
+    fs.rmdirSync(smokeParent);
   }
 }
 

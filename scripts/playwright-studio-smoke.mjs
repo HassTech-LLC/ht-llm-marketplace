@@ -19,14 +19,38 @@ try {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const consoleErrors = [];
+    const failedRequests = [];
+    const badResponses = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    page.on("requestfailed", (request) => failedRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ""}`));
+    page.on("response", (res) => {
+      if (res.status() >= 400) badResponses.push(`${res.status()} ${res.url()}`);
+    });
     await page.goto(studioUrl, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Marketplace" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "HT Studio" }).click();
     await page.getByRole("heading", { name: "HT Studio" }).waitFor({ timeout: 10_000 });
+    await page.getByText(/Runtime health/i).waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(750);
     const tabs = (await page.locator(".studio-tabbar button").allTextContents()).map((tab) => tab.trim());
     if (tabs.length !== 2 || tabs[0] !== "Marketplace" || tabs[1] !== "HT Studio") {
       throw new Error(`Unexpected Studio tabs: ${tabs.join(", ")}`);
     }
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    if (overflow) throw new Error("Studio desktop layout has horizontal overflow.");
+    if (consoleErrors.length || failedRequests.length || badResponses.length) {
+      throw new Error(
+        `Studio browser smoke found errors\nconsole=${consoleErrors.join("\n")}\nfailed=${failedRequests.join("\n")}\nresponses=${badResponses.join("\n")}`
+      );
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(250);
+    const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    if (mobileOverflow) throw new Error("Studio mobile layout has horizontal overflow.");
   } finally {
     await browser.close();
   }
@@ -49,6 +73,7 @@ async function startLocalStack() {
   const viteBin = path.resolve("node_modules", "vite", "bin", "vite.js");
   children.push(spawnLogged("studio", process.execPath, [viteBin, "--host", studio.hostname, "--port", studio.port, "--strictPort"], {
     cwd: path.resolve("apps", "studio"),
+    env: { ...process.env, VITE_HT_MARKETPLACE_API_URL: apiUrl },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   }));

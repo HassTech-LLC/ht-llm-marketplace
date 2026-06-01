@@ -67,4 +67,26 @@ describe("chooseStandardModel", () => {
 
     expect(decision.selected?.name).toBe("qwen-local");
   });
+
+  it("excludes embedding and vision artifacts from the standard chat route", () => {
+    const decision = chooseStandardModel([
+      model({ name: "nomic-embed-text-v1.5.Q4_K_M", sizeBytes: 300_000_000 }),
+      model({ name: "bge-small-en-v1.5", sizeBytes: 200_000_000 }),
+      model({ name: "llava-v1.6-vision", sizeBytes: 2_000_000_000 }),
+      model({ name: "qwen2.5-0.5b-instruct", sizeBytes: 600_000_000 })
+    ]);
+
+    expect(decision.selected?.name).toBe("qwen2.5-0.5b-instruct");
+    expect(decision.candidates.map((candidate) => candidate.model.name)).not.toContain("nomic-embed-text-v1.5.Q4_K_M");
+  });
+
+  it("excludes tiny placeholder GGUF files from the standard chat route", () => {
+    const decision = chooseStandardModel([
+      model({ name: "specialist", path: "C:/runs/specialist.gguf", sizeBytes: 135 }),
+      model({ name: "qwen2.5-0.5b-instruct", sizeBytes: 600_000_000 })
+    ]);
+
+    expect(decision.selected?.name).toBe("qwen2.5-0.5b-instruct");
+    expect(decision.candidates.map((candidate) => candidate.model.name)).not.toContain("specialist");
+  });
 });

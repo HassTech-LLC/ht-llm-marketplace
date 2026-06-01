@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ModelMarketplace, type MarketplaceTheme } from "@ht-llm-marketplace/react";
 import { MarketplaceClient } from "@ht-llm-marketplace/sdk";
-import { RunConsole, type PendingLoad } from "./RunConsole";
+import { studioApiUrl } from "./api";
+import { ICON_LABELS_EVENT, ICON_LABELS_STORAGE_KEY, RunConsole, type PendingLoad } from "./RunConsole";
 
 const THEME_STORAGE_KEY = "ht_marketplace:theme";
+const CHECK_ICON = "\u2713";
 
-const client = new MarketplaceClient({ apiUrl: "http://127.0.0.1:3001" });
+const API_URL = studioApiUrl();
+const client = new MarketplaceClient({ apiUrl: API_URL });
 
 type Tab = "marketplace" | "run";
 
@@ -19,11 +22,18 @@ export function App() {
   const [tab, setTab] = useState<Tab>("marketplace");
   const [pendingLoad, setPendingLoad] = useState<PendingLoad | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [iconLabels, setIconLabels] = useState(() => {
+    try {
+      return localStorage.getItem(ICON_LABELS_STORAGE_KEY) !== "false";
+    } catch {
+      return true;
+    }
+  });
   const seen = useRef<Set<string>>(new Set());
   const initialized = useRef(false);
 
-  // Theme is owned by the shell so it can drive every surface — the marketplace
-  // pane, the Run console, the tab bar, and the toasts — not just the catalog.
+  // Theme is owned by the shell so it can drive every surface: the marketplace
+  // pane, the Run console, the tab bar, and the toasts, not just the catalog.
   const [theme, setTheme] = useState<MarketplaceTheme>(() => {
     try {
       const saved = localStorage.getItem(THEME_STORAGE_KEY);
@@ -46,7 +56,15 @@ export function App() {
     }
   }, [theme]);
 
-  const marketplaceConfig = useMemo(() => ({ theme }), [theme]);
+  useEffect(() => {
+    const updateIconLabels = (event: Event) => {
+      setIconLabels(Boolean((event as CustomEvent<boolean>).detail));
+    };
+    window.addEventListener(ICON_LABELS_EVENT, updateIconLabels);
+    return () => window.removeEventListener(ICON_LABELS_EVENT, updateIconLabels);
+  }, []);
+
+  const marketplaceConfig = useMemo(() => ({ theme, apiUrl: API_URL }), [theme]);
 
   // Watch for completed downloads so we can offer a one-click "Run it" hand-off.
   useEffect(() => {
@@ -116,7 +134,7 @@ export function App() {
           {toasts.map((toast) => (
             <div key={toast.id} className="studio-toast">
               <span className="studio-toast-text">
-                ✓ <strong>{toast.label}</strong> downloaded
+                {iconLabels ? `${CHECK_ICON} ` : ""}<strong>{toast.label}</strong> downloaded
               </span>
               <div className="studio-toast-actions">
                 <button className="run-btn small" onClick={() => runFromToast(toast)}>

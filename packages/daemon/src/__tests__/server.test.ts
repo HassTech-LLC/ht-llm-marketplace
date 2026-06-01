@@ -189,6 +189,7 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       },
       embeddings: Promise.resolve(undefined),
       llamaServer: {
+        configure: vi.fn(),
         status: vi.fn().mockReturnValue({ available: false, running: false, message: "unavailable" }),
         start: vi.fn().mockResolvedValue({ available: false, running: false, message: "unavailable" }),
         stop: vi.fn().mockResolvedValue({ available: false, running: false, message: "unavailable" })
@@ -489,6 +490,75 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       );
       expect(res.body).toContain('"content":"hi"');
       expect(res.body).toContain('"done":true');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("POST /api/chat reconfigures and auto-starts delegated llama-server from saved config", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+      keepWarm: true,
+      unloadAfterIdleMs: 900000,
+      contextSize: 4096,
+      gpuLayers: "auto",
+      threads: "auto",
+      backend: "delegated-server",
+      draftModel: null,
+      delegatedServer: { enabled: true, port: 8080, parallel: 2, continuousBatching: true },
+      hotPool: { enabled: true, maxModels: 2, maxModelBytes: 2_000_000_000, autoWarm: true }
+    });
+    mockContext.llamaServer.status = vi
+      .fn()
+      .mockReturnValueOnce({
+        available: true,
+        running: false,
+        endpoint: "http://127.0.0.1:8080",
+        message: "binary found"
+      })
+      .mockReturnValue({
+        available: true,
+        running: true,
+        endpoint: "http://127.0.0.1:8080",
+        message: "running"
+      });
+    mockContext.llamaServer.start = vi.fn().mockResolvedValue({
+      available: true,
+      running: true,
+      endpoint: "http://127.0.0.1:8080",
+      message: "started"
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "hi" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        model: "phi-3",
+        messages: [{ role: "user", content: "Hello there" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.llamaServer.configure).toHaveBeenCalledWith(expect.objectContaining({ port: 8080, parallel: 2 }));
+      expect(mockContext.llamaServer.start).toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8080/health", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(JSON.parse(res.body).message.content).toBe("hi");
     } finally {
       vi.unstubAllGlobals();
     }

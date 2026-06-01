@@ -6,7 +6,7 @@
 
 HT Local LLM Marketplace is a local-first model marketplace and runtime control plane. It ships as a standalone studio, a local daemon, a typed SDK, a React package, a framework-neutral Web Component, and a CLI.
 
-The product goal is narrower than a generic chat app: discover runnable open models, score them against local hardware, install them through Ollama, LM Studio, direct GGUF, or an OpenAI-compatible endpoint, track local downloads privately, and delete only marketplace-owned artifacts with a dry-run proof.
+The product goal is narrower than a generic chat app: discover runnable open models, score them against local hardware, install them through Ollama, LM Studio, direct GGUF, or an OpenAI-compatible endpoint, track local downloads privately, and delete only marketplace-owned artifacts with dry-run evidence.
 
 This repo is prepared for public GitHub and npm distribution under MIT. The workspace root stays private, while publishable packages are marked public.
 
