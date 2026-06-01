@@ -40,6 +40,7 @@
     "smoke:packages": "node scripts/package-smoke.mjs",
     "check:artifacts": "node scripts/check-artifacts.mjs",
     "check:compatibility": "node scripts/compatibility-smoke.mjs",
+    "smoke:server-quality": "node scripts/server-quality-smoke.mjs",
     "smoke:docker": "node scripts/smoke-docker.mjs",
     "smoke:installer": "node scripts/smoke-installer.mjs",
     "smoke:studio": "node scripts/playwright-studio-smoke.mjs",

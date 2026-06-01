@@ -162,6 +162,10 @@ export function createServer(context: RuntimeContext) {
         });
       }
 
+      if (route === "GET /api/server/readiness") {
+        return json(response, await serverReadiness(context));
+      }
+
       if (route === "GET /api/runtimes") {
         return json(response, { runtimes: await runtimeStatuses(context) });
       }
@@ -659,6 +663,70 @@ async function runtimeStatuses(context: RuntimeContext) {
   // The built-in llama.cpp engine replaces the runtime slot that previously
   // probed a remote llama.cpp server; it runs owned GGUFs in-process.
   return [ollama, lmstudio, context.engine.status(ownedEngineModels(context)), openai];
+}
+
+async function serverReadiness(context: RuntimeContext) {
+  const [models, runtimes] = await Promise.all([context.modelIndex.models(), runtimeStatuses(context)]);
+  const runtimeConfig = context.store.getRuntimeConfig();
+  const engineRuntime = runtimes.find((runtime) => runtime.id === "llamacpp");
+  const llamaServer = context.llamaServer.status();
+  const queue = context.queue.status();
+  const hotPool = context.hotPool.status(runtimeConfig);
+  const localRunnableModels = models.filter((model) => model.runnable && !model.path.startsWith("virtual:"));
+  const loadedModels = [
+    ...(context.engine.loadedModel ? [context.engine.loadedModel] : []),
+    ...hotPool.entries.filter((entry) => entry.state === "ready").map((entry) => entry.model)
+  ];
+  const endpoints = {
+    health: true,
+    openAiModels: true,
+    openAiChatCompletions: true,
+    openAiCompletions: true,
+    openAiResponses: true,
+    openAiEmbeddings: true,
+    ollamaVersion: true,
+    ollamaTags: true,
+    ollamaChat: true,
+    ollamaGenerate: true,
+    ollamaShow: true,
+    ollamaPs: true
+  };
+  const blockers: string[] = [];
+  if (!engineRuntime?.online) blockers.push("Built-in llama.cpp engine is not available.");
+  if (localRunnableModels.length === 0) blockers.push("No runnable local GGUF models are indexed.");
+  if (runtimeConfig.backend === "delegated-server" && !llamaServer.running) blockers.push("Delegated llama-server backend is selected but not running.");
+  const warnings: string[] = [];
+  if ((queue.queued?.length || 0) > 0) warnings.push(`${queue.queued.length} generation request(s) are currently queued.`);
+  if (hotPool.enabled && hotPool.entries.filter((entry) => entry.state === "ready").length === 0) {
+    warnings.push("Hot model pool is enabled but has no ready entries yet.");
+  }
+  return {
+    ok: blockers.length === 0,
+    mode: runtimeConfig.backend,
+    version: DAEMON_VERSION,
+    endpoints,
+    runtime: {
+      engineAvailable: Boolean(engineRuntime?.online),
+      engineLoadedModel: context.engine.loadedModel || null,
+      delegatedServer: llamaServer
+    },
+    models: {
+      indexed: models.length,
+      runnableLocal: localRunnableModels.length,
+      loaded: loadedModels
+    },
+    queue,
+    hotPool,
+    blockers,
+    warnings,
+    recommendations: blockers.length
+      ? [
+          "Install or enable the built-in engine runtime.",
+          "Download or sideload at least one runnable GGUF model.",
+          "Use /api/engine/server/status and /api/engine/server/start when delegated-server mode is selected."
+        ]
+      : ["Server is ready for local OpenAI/Ollama-compatible single-user inference."]
+  };
 }
 
 function standardRouteDecision(context: RuntimeContext, models = context.modelIndex.snapshot().models) {

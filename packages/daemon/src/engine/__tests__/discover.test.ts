@@ -9,7 +9,9 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "ht-discover-"));
 function write(relative: string, bytes = 16) {
   const full = path.join(root, relative);
   fs.mkdirSync(path.dirname(full), { recursive: true });
-  fs.writeFileSync(full, Buffer.alloc(bytes));
+  const buffer = Buffer.alloc(bytes);
+  buffer.write("GGUF", 0, "ascii");
+  fs.writeFileSync(full, buffer);
   return full;
 }
 
@@ -42,6 +44,17 @@ describe("discoverGgufModels", () => {
   it("skips mmproj projector files and non-gguf files", () => {
     expect(models.some((m) => m.name.includes("mmproj"))).toBe(false);
     expect(models.some((m) => m.path.endsWith(".txt"))).toBe(false);
+  });
+
+  it("skips .gguf files whose header is not GGUF", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ht-discover-invalid-"));
+    try {
+      fs.writeFileSync(path.join(dir, "fake.gguf"), "HT LLM placeholder");
+      const discovered = discoverGgufModels([{ dir, source: "test" }], { skipOllama: true });
+      expect(discovered.some((m) => m.name === "fake")).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("recurses into nested directories", () => {
@@ -81,7 +94,7 @@ describe("discoverGgufModels", () => {
 
     // Write a dummy blob
     const blobPath = path.join(blobsDir, blobName);
-    fs.writeFileSync(blobPath, "dummy weights content");
+    fs.writeFileSync(blobPath, Buffer.from("GGUF dummy weights content"));
 
     // Set OLLAMA_MODELS and run discovery
     const originalEnv = process.env.OLLAMA_MODELS;

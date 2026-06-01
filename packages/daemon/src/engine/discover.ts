@@ -161,6 +161,7 @@ export function discoverGgufModels(roots: ModelRoot[], options: { maxDepth?: num
       }
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".gguf")) continue;
       if (/mmproj/i.test(entry.name)) continue;
+      if (!hasGgufMagic(full)) continue;
       const shard = entry.name.match(SPLIT_SHARD);
       if (shard && Number(shard[1]) !== 1) continue; // keep only the first shard of a split model
       const resolved = realResolve(full);
@@ -229,7 +230,7 @@ export function discoverGgufModels(roots: ModelRoot[], options: { maxDepth?: num
             if (modelLayer?.digest) {
               const blobName = modelLayer.digest.replace(":", "-");
               const blobPath = path.join(ollamaBlobsDir, blobName);
-              if (fs.existsSync(blobPath)) {
+              if (fs.existsSync(blobPath) && hasGgufMagic(blobPath)) {
                 let sizeBytes = 0;
                 try {
                   sizeBytes = fs.statSync(blobPath).size;
@@ -259,6 +260,26 @@ export function discoverGgufModels(roots: ModelRoot[], options: { maxDepth?: num
   }
 
   return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function hasGgufMagic(filePath: string): boolean {
+  const buffer = Buffer.alloc(4);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, "r");
+    if (fs.readSync(fd, buffer, 0, 4, 0) !== 4) return false;
+    return buffer.toString("ascii") === "GGUF";
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore close errors during discovery.
+      }
+    }
+  }
 }
 
 function realResolve(value: string): string {

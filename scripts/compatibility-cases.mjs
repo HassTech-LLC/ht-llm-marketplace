@@ -1,5 +1,6 @@
 export const compatibilityCases = [
   { client: "health", method: "GET", path: "/health", allowed: [200] },
+  { client: "server-quality", method: "GET", path: "/api/server/readiness", allowed: [200] },
   { client: "ollama", method: "GET", path: "/api/version", allowed: [200] },
   { client: "ollama", method: "GET", path: "/api/tags", allowed: [200] },
   { client: "ollama", method: "GET", path: "/api/ps", allowed: [200] },

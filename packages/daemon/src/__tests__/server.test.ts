@@ -265,6 +265,24 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     });
   });
 
+  it("GET /api/server/readiness reports standalone server readiness", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/server/readiness");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.endpoints.ollamaGenerate).toBe(true);
+    expect(parsed.endpoints.openAiCompletions).toBe(true);
+    expect(parsed.models.runnableLocal).toBeGreaterThanOrEqual(1);
+    expect(parsed.recommendations[0]).toContain("Server is ready");
+  });
+
   it("POST /api/show returns local model metadata in Ollama shape", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);
