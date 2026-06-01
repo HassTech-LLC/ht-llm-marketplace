@@ -974,6 +974,8 @@ async function textGenerationTarget(context: RuntimeContext, requestedModel?: st
         if (!support.supported) throw httpError(422, support.reason || `Model architecture is not supported: ${support.architecture}`);
       }
       await context.engine.load({ modelPath: target.path, displayName: target.displayName });
+    } else if (!canUseLoadedModelAlias(context, requestedModel)) {
+      throw httpError(404, `Model not found locally: ${requestedModel}`);
     }
   }
 
@@ -1036,7 +1038,7 @@ async function ollamaGenerate(
   if (delegated && "status" in delegated) return json(response, { error: delegated.message }, delegated.status);
   if (delegated) return delegatedOllamaGenerate(request, response, delegated.endpoint, body);
 
-  if (body.model && !resolveLocalModelByName(context, body.model) && !context.engine.isLoaded()) {
+  if (body.model && !resolveLocalModelByName(context, body.model) && !canUseLoadedModelAlias(context, body.model)) {
     return proxyOllamaGenerate(request, response, context, body.proxyBody);
   }
 
@@ -1108,6 +1110,8 @@ async function engineChat(
           threads: body.threads
         });
       }
+    } else if (!canUseLoadedModelAlias(context, body.model)) {
+      return json(response, { error: `Model not found locally: ${body.model}` }, 404);
     }
   }
 
@@ -1705,6 +1709,14 @@ function resolveLocalModelByName(context: RuntimeContext, name?: string): { path
   return undefined;
 }
 
+function canUseLoadedModelAlias(context: RuntimeContext, requestedModel?: string) {
+  if (!requestedModel) return true;
+  const loaded = context.engine.loadedModel;
+  if (!loaded) return false;
+  const normalized = requestedModel.trim().toLowerCase();
+  return normalized === loaded.toLowerCase() || normalized === "local" || normalized === "ht-engine" || normalized === "llamacpp";
+}
+
 /** OpenAI-compatible chat handler (`POST /v1/chat/completions`). */
 async function openAiChat(
   request: http.IncomingMessage,
@@ -1748,6 +1760,8 @@ async function openAiChat(
       } catch (error) {
         return json(response, { error: { message: `Failed to load model '${parsed.model}': ${(error as Error).message}` } }, 500);
       }
+    } else if (!canUseLoadedModelAlias(context, parsed.model)) {
+      return json(response, { error: { message: `Model not found locally: ${parsed.model}`, type: "model_not_found" } }, 404);
     }
   }
   if (!context.engine.isLoaded() && !parsed.model) {
@@ -1845,6 +1859,7 @@ async function openAiResponses(
   if (model && context.engine.loadedModel !== model) {
     const target = resolveLocalModelByName(context, model);
     if (target) await context.engine.load({ modelPath: target.path, displayName: target.displayName });
+    else if (!canUseLoadedModelAlias(context, model)) return json(response, { error: { message: `Model not found locally: ${model}`, type: "model_not_found" } }, 404);
   }
   if (!context.engine.isLoaded() && !model) {
     await loadStandardRouteModel(context);

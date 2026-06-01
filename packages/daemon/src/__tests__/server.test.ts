@@ -469,6 +469,46 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(mockContext.engine.chat).toHaveBeenCalledWith([{ role: "user", content: "hello" }], expect.objectContaining({ maxTokens: 4 }));
   });
 
+  it("POST /v1/chat/completions rejects unknown model names instead of silently using the loaded model", async () => {
+    const mockContext = createMockContext();
+    mockContext.engine.loadedModel = "phi-3";
+    mockContext.engine.loadedPath = "./models/Phi-3-mini-4k-instruct-q4.gguf";
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/chat/completions", {
+      model: "missing-model",
+      messages: [{ role: "user", content: "hello" }]
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body).error.type).toBe("model_not_found");
+    expect(mockContext.engine.chat).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/chat rejects unknown explicit llama.cpp models instead of silently using the loaded model", async () => {
+    const mockContext = createMockContext();
+    mockContext.engine.loadedModel = "phi-3";
+    mockContext.engine.loadedPath = "./models/Phi-3-mini-4k-instruct-q4.gguf";
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/chat", {
+      runtime: "llamacpp",
+      model: "missing-model",
+      messages: [{ role: "user", content: "hello" }],
+      stream: false
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body).error).toContain("Model not found locally");
+    expect(mockContext.engine.chat).not.toHaveBeenCalled();
+  });
+
   it("POST /api/generate supports Ollama-compatible prompt generation over the local engine", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);
