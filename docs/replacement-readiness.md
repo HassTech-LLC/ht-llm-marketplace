@@ -12,6 +12,7 @@ The project has a local daemon, embeddable marketplace, direct GGUF engine path,
 - Artifact cleanliness: `npm run check:artifacts`
 - API compatibility smoke: `/api/chat`, `/api/generate`, `/api/show`, `/api/ps`, `/api/tags`, `/v1/models`, `/v1/completions`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`
 - Server quality smoke: `npm run smoke:server-quality` starts the compiled daemon, checks `/api/server/readiness`, verifies OpenAI/Ollama server surfaces, and runs warm plus concurrent generation when a local model is indexed.
+- Replacement gauntlet: `npm run smoke:server-gauntlet` covers real wire-shape compatibility, streaming, abort cleanup, mixed concurrency soak, delegated-server status, bad-model handling, `htlm serve` boot behavior, and advanced endpoint payload edge cases. Set `HT_GAUNTLET_SOAK_LOOPS`, `HT_GAUNTLET_REQUIRE_MODEL=1`, or `HT_GAUNTLET_REQUIRE_DELEGATED=1` to make the gate stricter.
 - CLI smoke: `htlm serve`, `pull`, `run`, `list`, `rm`, `bench`, `doctor`
 - Distribution smoke: Docker daemon boots and answers `/health`
 - Runtime benchmarks: first-token latency, total time, tokens/sec, and failure rate
