@@ -28,13 +28,16 @@ import { LlamaEngine } from "./engine/llama.js";
 import { ModelIndex } from "./engine/model-index.js";
 import { GenerationQueue } from "./engine/queue.js";
 import { chooseStandardModel } from "./engine/standard-routing.js";
-import { ollamaChunk, ollamaDone, type ChatMessage } from "./engine/messages.js";
+import { ollamaChunk, ollamaDone, ollamaGenerateChunk, ollamaGenerateDone, type ChatMessage } from "./engine/messages.js";
 import {
   openAiChunk,
   openAiCompletion,
   openAiCompletionId,
   openAiFinalChunk,
   openAiModelList,
+  openAiTextChunk,
+  openAiTextCompletion,
+  openAiTextFinalChunk,
   openAiUsage,
   parseOpenAiChatRequest,
   type OpenAiUsage
@@ -507,22 +510,28 @@ export function createServer(context: RuntimeContext) {
         const models = [
           ...ownedEngineModels(context),
           ...(await localGgufModels(context))
-        ].map((model) => ({
-          name: model.name,
-          model: model.name,
-          modified_at: new Date().toISOString(),
-          size: model.sizeBytes || 0,
-          digest: "",
-          details: {
-            parent_model: "",
-            format: "gguf",
-            family: "llama",
-            families: ["llama"],
-            parameter_size: "",
-            quantization_level: ""
-          }
-        }));
+        ].map(ollamaModelSummary);
         return json(response, { models });
+      }
+
+      if (route === "POST /api/show") {
+        const body = requireObject<Record<string, unknown>>(await readJson<unknown>(request));
+        const model = requireString(body.model, "model", 500);
+        const local = resolveLocalModelByName(context, model);
+        if (local) {
+          const entry = [...ownedEngineModels(context), ...localGgufSnapshot(context)].find((candidate) => candidate.name === model);
+          return json(response, ollamaShowModel(model, local, entry));
+        }
+        try {
+          const upstream = await context.ollama.show(model);
+          return json(response, upstream);
+        } catch (error) {
+          return json(response, { error: `Model not found locally and Ollama show is unavailable: ${(error as Error).message}` }, 404);
+        }
+      }
+
+      if (route === "GET /api/ps") {
+        return json(response, ollamaRunningModels(context));
       }
 
       if (route === "GET /v1/models") {
@@ -544,6 +553,12 @@ export function createServer(context: RuntimeContext) {
       if (route === "POST /v1/chat/completions") {
         const body = await readJson<unknown>(request);
         await openAiChat(request, response, context, body);
+        return;
+      }
+
+      if (route === "POST /v1/completions") {
+        const body = requireObject<Record<string, unknown>>(await readJson<unknown>(request));
+        await openAiLegacyCompletions(request, response, context, body);
         return;
       }
 
@@ -618,6 +633,12 @@ export function createServer(context: RuntimeContext) {
         return;
       }
 
+      if (route === "POST /api/generate") {
+        const body = requireObject(await readJson<Record<string, unknown>>(request));
+        await ollamaGenerate(request, response, context, sanitizeOllamaGenerateRequest(body));
+        return;
+      }
+
       if (request.method === "GET" && url.pathname.startsWith("/widget/")) {
         return serveWidget(url.pathname, response);
       }
@@ -654,6 +675,90 @@ async function warmHotPool(context: RuntimeContext) {
     .filter((candidate) => candidate.healthy)
     .map((candidate) => candidate.model);
   return context.hotPool.warm(models, config);
+}
+
+function ollamaModelSummary(model: {
+  name: string;
+  sizeBytes?: number;
+  format?: string;
+  family?: string;
+  parameterSize?: string;
+  quantization?: string;
+}) {
+  const family = model.family || "llama";
+  return {
+    name: model.name,
+    model: model.name,
+    modified_at: new Date().toISOString(),
+    size: model.sizeBytes || 0,
+    digest: "",
+    details: {
+      parent_model: "",
+      format: model.format || "gguf",
+      family,
+      families: [family],
+      parameter_size: model.parameterSize || "",
+      quantization_level: model.quantization || ""
+    }
+  };
+}
+
+function ollamaShowModel(
+  model: string,
+  local: { path: string; displayName: string },
+  entry?: { sizeBytes?: number; family?: string; parameterSize?: string; quantization?: string; source?: string }
+) {
+  const family = entry?.family || "llama";
+  return {
+    modelfile: `FROM ${local.path}`,
+    parameters: "",
+    template: "",
+    details: {
+      parent_model: "",
+      format: "gguf",
+      family,
+      families: [family],
+      parameter_size: entry?.parameterSize || "",
+      quantization_level: entry?.quantization || ""
+    },
+    model_info: {
+      "general.architecture": family,
+      "general.name": local.displayName || model,
+      "general.file_type": "gguf"
+    },
+    capabilities: ["completion"],
+    modified_at: new Date().toISOString(),
+    size: entry?.sizeBytes || 0
+  };
+}
+
+function ollamaRunningModels(context: RuntimeContext) {
+  const loaded = new Map<string, ReturnType<typeof ollamaModelSummary> & { expires_at: string; size_vram: number; context_length: number }>();
+  const config = context.store.getRuntimeConfig();
+  const expiresAt = new Date(Date.now() + Math.max(60_000, config.unloadAfterIdleMs || 900_000)).toISOString();
+  const push = (model: { name: string; sizeBytes?: number; family?: string; parameterSize?: string; quantization?: string }) => {
+    const summary = ollamaModelSummary(model);
+    loaded.set(summary.name, {
+      ...summary,
+      expires_at: expiresAt,
+      size_vram: 0,
+      context_length: config.contextSize || 4096
+    });
+  };
+  if (context.engine.loadedModel) {
+    const entry = localGgufSnapshot(context).find((model) => model.name === context.engine.loadedModel);
+    push({ name: context.engine.loadedModel, sizeBytes: entry?.sizeBytes });
+  }
+  if (context.hotPool) {
+    for (const entry of context.hotPool.status(config).entries) {
+      if (entry.state === "ready") push({ name: entry.model, sizeBytes: entry.sizeBytes });
+    }
+  }
+  const delegated = context.llamaServer.status();
+  if (delegated.running) {
+    push({ name: context.engine.loadedModel || "delegated-llama-server" });
+  }
+  return { models: [...loaded.values()] };
 }
 
 async function configureLlamaServer(context: RuntimeContext) {
@@ -782,6 +887,116 @@ function resolveEngineModelPath(context: RuntimeContext, body: { artifactId?: st
     return { path: body.path, displayName: path.basename(body.path) };
   }
   throw new Error("Provide an artifactId or a path to load.");
+}
+
+interface TextGenerationTarget {
+  modelName: string;
+  kind: "hot" | "engine";
+}
+
+async function textGenerationTarget(context: RuntimeContext, requestedModel?: string): Promise<TextGenerationTarget> {
+  const hotModel = await hotPoolTarget(context, requestedModel);
+  if (hotModel) return { modelName: hotModel, kind: "hot" };
+
+  if (requestedModel && context.engine.loadedModel !== requestedModel) {
+    const target = resolveLocalModelByName(context, requestedModel);
+    if (target) {
+      if (!target.path.startsWith("virtual:")) {
+        const support = await engineArchSupport(context, target.path);
+        if (!support.supported) throw httpError(422, support.reason || `Model architecture is not supported: ${support.architecture}`);
+      }
+      await context.engine.load({ modelPath: target.path, displayName: target.displayName });
+    }
+  }
+
+  if (!context.engine.isLoaded() && !requestedModel) {
+    await loadStandardRouteModel(context);
+  }
+  if (!context.engine.isLoaded()) {
+    throw httpError(400, "No model is loaded. Load a model first or pass the name of a locally available model.");
+  }
+  return { modelName: context.engine.loadedModel || requestedModel || "ht-engine", kind: "engine" };
+}
+
+function runTextGeneration(
+  context: RuntimeContext,
+  target: TextGenerationTarget,
+  label: string,
+  messages: ChatMessage[],
+  options: {
+    maxTokens?: number;
+    temperature?: number;
+    onToken?: (token: string) => void;
+    onUsage?: (usage: { promptTokens: number; completionTokens: number }) => void;
+    signal?: AbortSignal;
+  }
+) {
+  return context.queue.run(
+    label,
+    (queueSignal) => {
+      const signal = options.signal ? combineAbortSignals(queueSignal, options.signal) : queueSignal;
+      const engineOptions = {
+        maxTokens: options.maxTokens,
+        temperature: options.temperature,
+        onToken: options.onToken,
+        onUsage: options.onUsage,
+        signal
+      };
+      return target.kind === "hot"
+        ? context.hotPool.chat(target.modelName, messages, engineOptions)
+        : context.engine.chat(messages, engineOptions);
+    },
+    options.signal ? { signal: options.signal } : undefined
+  );
+}
+
+async function ollamaGenerate(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RuntimeContext,
+  body: {
+    model?: string;
+    prompt: string;
+    messages: ChatMessage[];
+    stream?: boolean;
+    maxTokens?: number;
+    temperature?: number;
+    proxyBody: Record<string, unknown>;
+  }
+) {
+  const delegated = await delegatedBackend(context);
+  if (delegated && "status" in delegated) return json(response, { error: delegated.message }, delegated.status);
+  if (delegated) return delegatedOllamaGenerate(request, response, delegated.endpoint, body);
+
+  if (body.model && !resolveLocalModelByName(context, body.model) && !context.engine.isLoaded()) {
+    return proxyOllamaGenerate(request, response, context, body.proxyBody);
+  }
+
+  const target = await textGenerationTarget(context, body.model);
+  const stream = body.stream !== false;
+  if (!stream) {
+    const content = await runTextGeneration(context, target, `generate:${target.modelName}`, body.messages, {
+      maxTokens: body.maxTokens,
+      temperature: body.temperature
+    });
+    return json(response, ollamaGenerateDone(target.modelName, content));
+  }
+
+  response.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-cache" });
+  const controller = new AbortController();
+  request.on("close", () => controller.abort());
+  try {
+    await runTextGeneration(context, target, `generate-stream:${target.modelName}`, body.messages, {
+      maxTokens: body.maxTokens,
+      temperature: body.temperature,
+      signal: controller.signal,
+      onToken: (token) => response.write(`${JSON.stringify(ollamaGenerateChunk(target.modelName, token))}\n`)
+    });
+    response.write(`${JSON.stringify(ollamaGenerateDone(target.modelName))}\n`);
+  } catch (error) {
+    response.write(`${JSON.stringify({ model: target.modelName, error: (error as Error).message, done: true })}\n`);
+  }
+  response.end();
 }
 
 async function engineChat(
@@ -1005,6 +1220,65 @@ async function delegatedOllamaChat(
   await pipeOpenAiSseAsOllamaNdjson(upstream, response, modelName);
 }
 
+async function delegatedOllamaGenerate(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  endpoint: string,
+  body: { messages: ChatMessage[]; model?: string; stream?: boolean; maxTokens?: number; temperature?: number }
+) {
+  const stream = body.stream !== false;
+  const modelName = body.model || "local";
+  const upstream = await delegatedPostJson(request, `${endpoint}/v1/chat/completions`, {
+    model: modelName,
+    messages: body.messages,
+    stream,
+    max_tokens: body.maxTokens,
+    temperature: body.temperature
+  });
+
+  if (!stream) {
+    const payload = await safeJson(upstream);
+    if (!upstream.ok) return json(response, payload, upstream.status);
+    return json(response, ollamaGenerateDone(modelName, extractOpenAiContent(payload)), upstream.status);
+  }
+
+  response.writeHead(upstream.status, { "content-type": "application/x-ndjson", "cache-control": "no-cache" });
+  if (!upstream.ok || !upstream.body) {
+    response.write(`${JSON.stringify({ model: modelName, error: await upstream.text(), done: true })}\n`);
+    response.end();
+    return;
+  }
+  await pipeOpenAiSseAsOllamaGenerateNdjson(upstream, response, modelName);
+}
+
+async function proxyOllamaGenerate(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RuntimeContext,
+  body: Record<string, unknown>
+) {
+  let upstream: Response;
+  try {
+    upstream = await context.ollama.generate(body, { signal: abortSignalForRequest(request) });
+  } catch (error) {
+    return json(response, { error: `Model is not local and Ollama generate is unavailable: ${(error as Error).message}` }, 503);
+  }
+  response.writeHead(upstream.status, {
+    "content-type": upstream.headers.get("content-type") || "application/json"
+  });
+  if (!upstream.body) {
+    response.end();
+    return;
+  }
+  const reader = upstream.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    response.write(Buffer.from(value));
+  }
+  response.end();
+}
+
 async function delegatedOpenAiChat(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -1027,6 +1301,78 @@ async function delegatedOpenAiChat(
     return;
   }
   await pipeResponseBodyWithLimit(upstream, response);
+  response.end();
+}
+
+async function openAiLegacyCompletions(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RuntimeContext,
+  body: Record<string, unknown>
+) {
+  const parsed = sanitizeOpenAiCompletionRequest(body);
+  const messages: ChatMessage[] = [{ role: "user", content: parsed.prompt }];
+  const delegated = await delegatedBackend(context);
+  if (delegated && "status" in delegated) {
+    return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
+  }
+  if (delegated) {
+    const upstream = await delegatedPostJson(request, `${delegated.endpoint}/v1/chat/completions`, {
+      model: parsed.model || "local",
+      messages,
+      stream: parsed.stream,
+      max_tokens: parsed.maxTokens,
+      temperature: parsed.temperature
+    });
+    if (!parsed.stream) {
+      const payload = await safeJson(upstream);
+      if (!upstream.ok) return json(response, payload, upstream.status);
+      return json(response, openAiTextCompletion(parsed.model || "local", extractOpenAiContent(payload)), upstream.status);
+    }
+    response.writeHead(upstream.status, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    if (!upstream.ok || !upstream.body) {
+      response.write(`data: ${JSON.stringify({ error: { message: await upstream.text() } })}\n\n`);
+      response.end();
+      return;
+    }
+    const id = `cmpl-${cryptoRandomId()}`;
+    await pipeOpenAiSseAsTextCompletion(upstream, response, parsed.model || "local", id);
+    return;
+  }
+
+  const target = await textGenerationTarget(context, parsed.model);
+  if (!parsed.stream) {
+    let usage: OpenAiUsage | undefined;
+    const content = await runTextGeneration(context, target, `completion:${target.modelName}`, messages, {
+      maxTokens: parsed.maxTokens,
+      temperature: parsed.temperature,
+      onUsage: (u) => {
+        usage = openAiUsage(u.promptTokens, u.completionTokens);
+      }
+    });
+    return json(response, openAiTextCompletion(target.modelName, content, undefined, usage));
+  }
+
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  const id = `cmpl-${cryptoRandomId()}`;
+  const controller = new AbortController();
+  request.on("close", () => controller.abort());
+  let streamUsage: OpenAiUsage | undefined;
+  try {
+    await runTextGeneration(context, target, `completion-stream:${target.modelName}`, messages, {
+      maxTokens: parsed.maxTokens,
+      temperature: parsed.temperature,
+      signal: controller.signal,
+      onToken: (token) => response.write(`data: ${JSON.stringify(openAiTextChunk(target.modelName, id, token))}\n\n`),
+      onUsage: (u) => {
+        streamUsage = openAiUsage(u.promptTokens, u.completionTokens);
+      }
+    });
+    response.write(`data: ${JSON.stringify(openAiTextFinalChunk(target.modelName, id, streamUsage))}\n\n`);
+    response.write("data: [DONE]\n\n");
+  } catch (error) {
+    response.write(`data: ${JSON.stringify({ error: { message: (error as Error).message } })}\n\n`);
+  }
   response.end();
 }
 
@@ -1127,6 +1473,25 @@ async function pipeOpenAiSseAsOllamaNdjson(upstream: Response, response: http.Se
     if (token) response.write(`${JSON.stringify(ollamaChunk(modelName, token))}\n`);
   });
   response.write(`${JSON.stringify(ollamaDone(modelName))}\n`);
+  response.end();
+}
+
+async function pipeOpenAiSseAsOllamaGenerateNdjson(upstream: Response, response: http.ServerResponse, modelName: string) {
+  await readOpenAiSse(upstream, (payload) => {
+    const token = extractOpenAiDelta(payload);
+    if (token) response.write(`${JSON.stringify(ollamaGenerateChunk(modelName, token))}\n`);
+  });
+  response.write(`${JSON.stringify(ollamaGenerateDone(modelName))}\n`);
+  response.end();
+}
+
+async function pipeOpenAiSseAsTextCompletion(upstream: Response, response: http.ServerResponse, modelName: string, id: string) {
+  await readOpenAiSse(upstream, (payload) => {
+    const token = extractOpenAiDelta(payload);
+    if (token) response.write(`data: ${JSON.stringify(openAiTextChunk(modelName, id, token))}\n\n`);
+  });
+  response.write(`data: ${JSON.stringify(openAiTextFinalChunk(modelName, id))}\n\n`);
+  response.write("data: [DONE]\n\n");
   response.end();
 }
 
@@ -1691,6 +2056,64 @@ function sanitizeOllamaChatRequest(body: Record<string, unknown>): Record<string
     sanitized.options = options;
   }
   return sanitized;
+}
+
+function sanitizeOllamaGenerateRequest(body: Record<string, unknown>) {
+  const prompt = requireString(body.prompt, "prompt", MAX_MESSAGE_CHARS);
+  const systemPrompt = optionalString(body.system, "system", MAX_MESSAGE_CHARS);
+  const messages: ChatMessage[] = [
+    ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
+    { role: "user" as const, content: prompt }
+  ];
+  const options = isPlainObject(body.options) ? body.options : {};
+  const maxTokens =
+    optionalClampedInt(options.num_predict, "options.num_predict", 1, MAX_TOKENS) ??
+    optionalClampedInt(body.max_tokens, "max_tokens", 1, MAX_TOKENS) ??
+    optionalClampedInt(body.maxTokens, "maxTokens", 1, MAX_TOKENS);
+  const temperature =
+    optionalClampedFloat(options.temperature, "options.temperature", 0, 2) ??
+    optionalClampedFloat(body.temperature, "temperature", 0, 2);
+  if (body.stream !== undefined && typeof body.stream !== "boolean") throw httpError(400, "stream must be a boolean.");
+  return {
+    model: optionalString(body.model, "model", 500),
+    prompt,
+    messages,
+    stream: typeof body.stream === "boolean" ? body.stream : undefined,
+    maxTokens,
+    temperature,
+    proxyBody: {
+      ...body,
+      model: optionalString(body.model, "model", 500),
+      prompt,
+      stream: typeof body.stream === "boolean" ? body.stream : undefined
+    }
+  };
+}
+
+function sanitizeOpenAiCompletionRequest(body: Record<string, unknown>) {
+  const prompt = promptToText(body.prompt);
+  if (!prompt.trim()) throw httpError(400, "prompt is required.");
+  if (body.stream !== undefined && typeof body.stream !== "boolean") throw httpError(400, "stream must be a boolean.");
+  return {
+    model: optionalString(body.model, "model", 500),
+    prompt,
+    stream: body.stream === true,
+    maxTokens:
+      optionalClampedInt(body.max_tokens, "max_tokens", 1, MAX_TOKENS) ??
+      optionalClampedInt(body.maxTokens, "maxTokens", 1, MAX_TOKENS),
+    temperature: optionalClampedFloat(body.temperature, "temperature", 0, 2)
+  };
+}
+
+function promptToText(value: unknown): string {
+  if (typeof value === "string") return value.slice(0, MAX_MESSAGE_CHARS);
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item : ""))
+      .join("\n")
+      .slice(0, MAX_MESSAGE_CHARS);
+  }
+  throw httpError(400, "prompt must be a string or string array.");
 }
 
 function sanitizeMessages(value: unknown): ChatMessage[] {

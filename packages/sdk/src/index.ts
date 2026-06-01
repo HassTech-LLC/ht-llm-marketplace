@@ -408,6 +408,65 @@ export interface LocalResponsesResponse {
   usage: { input_tokens: number; output_tokens: number; total_tokens: number };
 }
 
+export interface OllamaGenerateRequest {
+  model?: string;
+  prompt: string;
+  system?: string;
+  stream?: boolean;
+  options?: { num_predict?: number; num_ctx?: number; temperature?: number; [key: string]: unknown };
+  keep_alive?: string | number;
+  format?: "json" | Record<string, unknown>;
+}
+
+export interface OllamaGenerateResponse {
+  model: string;
+  created_at: string;
+  response: string;
+  done: boolean;
+  done_reason?: string;
+}
+
+export interface OllamaShowResponse {
+  modelfile?: string;
+  parameters?: string;
+  template?: string;
+  details?: Record<string, unknown>;
+  model_info?: Record<string, unknown>;
+  capabilities?: string[];
+  modified_at?: string;
+  size?: number;
+}
+
+export interface OllamaRunningModelsResponse {
+  models: Array<{
+    name: string;
+    model: string;
+    size: number;
+    digest: string;
+    details: Record<string, unknown>;
+    expires_at: string;
+    size_vram: number;
+    context_length: number;
+  }>;
+}
+
+export interface OpenAiCompletionRequest {
+  model?: string;
+  prompt: string | string[];
+  stream?: boolean;
+  max_tokens?: number;
+  temperature?: number;
+}
+
+export interface OpenAiCompletionResponse {
+  id: string;
+  object: "text_completion";
+  created: number;
+  model: string;
+  choices: Array<{ text: string; index: number; logprobs: null; finish_reason: "stop" | null }>;
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}
+
 export interface LlamaServerStatus {
   available: boolean;
   running: boolean;
@@ -592,6 +651,22 @@ export class MarketplaceClient {
 
   getResponse(id: string) {
     return this.get<LocalResponsesResponse>(`/v1/responses/${encodeURIComponent(id)}`);
+  }
+
+  completion(request: OpenAiCompletionRequest, options?: { signal?: AbortSignal }) {
+    return this.post<OpenAiCompletionResponse>("/v1/completions", request, options);
+  }
+
+  generate(request: OllamaGenerateRequest, options?: { signal?: AbortSignal }) {
+    return this.post<OllamaGenerateResponse>("/api/generate", request, options);
+  }
+
+  showModel(model: string) {
+    return this.post<OllamaShowResponse>("/api/show", { model });
+  }
+
+  runningModels() {
+    return this.get<OllamaRunningModelsResponse>("/api/ps");
   }
 
   engineConfig() {
