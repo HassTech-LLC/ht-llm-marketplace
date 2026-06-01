@@ -6,6 +6,14 @@ HT Local LLM Marketplace v1 is intentionally a tokens-and-config embed. Teams ca
 
 See `examples/react-embed` for a minimal React embed and `examples/enterprise-white-label` for a larger branded preset.
 
+For a project-specific starting point:
+
+```powershell
+npx htlm init --target react
+```
+
+Use `--target vite` or `--target next` when you want the printed snippet to match those host expectations. Next.js hosts should render the marketplace from a client component because it uses browser storage and a local daemon endpoint.
+
 ```tsx
 import { ModelMarketplace, type MarketplaceConfig } from "@ht-llm-marketplace/react";
 import "@ht-llm-marketplace/react/styles.css";
@@ -55,6 +63,14 @@ Existing props still work:
 ## Web Component
 
 See `examples/minimal-widget` for the smallest embed and `examples/plain-html` for a styled host page.
+
+For any non-React project, start with:
+
+```powershell
+npx htlm init --target html
+```
+
+That path is the portable default for static HTML, Astro, Rails, Django, Laravel, Phoenix, ASP.NET, CMS templates, and any host that can render a custom element and load a module script.
 
 Use simple attributes for common embed changes:
 

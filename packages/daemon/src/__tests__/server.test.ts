@@ -94,8 +94,10 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
           gpuLayers: "auto",
           threads: "auto",
           backend: "in-process",
+          residencyMode: "balanced",
           draftModel: null,
-          delegatedServer: { enabled: false, port: 8080, parallel: 4, continuousBatching: true }
+          delegatedServer: { enabled: false, port: 8080, parallel: 4, continuousBatching: true },
+          hotPool: { enabled: true, maxModels: 2, maxModelBytes: 2_000_000_000, autoWarm: true }
         }),
         setRuntimeConfig: vi.fn((config: any) => config),
         listAuditLog: vi.fn(),
@@ -131,7 +133,8 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
         chat: vi.fn().mockResolvedValue("Mock response")
       },
       hotPool: {
-        status: vi.fn().mockReturnValue({ enabled: false, maxModels: 0, maxModelBytes: 0, entries: [] }),
+        status: vi.fn().mockReturnValue({ enabled: false, maxModels: 0, maxModelBytes: 0, residencyMode: "balanced", entries: [] }),
+        warm: vi.fn().mockResolvedValue({ enabled: false, maxModels: 0, maxModelBytes: 0, residencyMode: "balanced", entries: [] }),
         has: vi.fn().mockReturnValue(false),
         chat: vi.fn()
       },
@@ -200,6 +203,12 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
         status: vi.fn().mockReturnValue({ available: false, running: false, message: "unavailable" }),
         start: vi.fn().mockResolvedValue({ available: false, running: false, message: "unavailable" }),
         stop: vi.fn().mockResolvedValue({ available: false, running: false, message: "unavailable" })
+      },
+      llamaServerPool: {
+        status: vi.fn().mockReturnValue({ enabled: false, basePort: 8080, entries: [] }),
+        endpointForModel: vi.fn().mockReturnValue(undefined),
+        warm: vi.fn().mockResolvedValue({ enabled: true, basePort: 8080, entries: [] }),
+        stopAll: vi.fn().mockResolvedValue({ enabled: true, basePort: 8080, entries: [] })
       }
     } as any;
     return ctx;
@@ -601,8 +610,10 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       gpuLayers: "auto",
       threads: "auto",
       backend: "delegated-server",
+      residencyMode: "balanced",
       draftModel: null,
-      delegatedServer: { enabled: true, port: 8080, parallel: 4, continuousBatching: true }
+      delegatedServer: { enabled: true, port: 8080, parallel: 4, continuousBatching: true },
+      hotPool: { enabled: true, maxModels: 2, maxModelBytes: 2_000_000_000, autoWarm: true }
     });
     mockContext.llamaServer.status = vi.fn().mockReturnValue({
       available: true,
@@ -651,6 +662,7 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       gpuLayers: "auto",
       threads: "auto",
       backend: "delegated-server",
+      residencyMode: "balanced",
       draftModel: null,
       delegatedServer: { enabled: true, port: 8080, parallel: 2, continuousBatching: true },
       hotPool: { enabled: true, maxModels: 2, maxModelBytes: 2_000_000_000, autoWarm: true }

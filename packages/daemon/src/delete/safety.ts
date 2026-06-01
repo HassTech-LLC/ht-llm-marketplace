@@ -106,5 +106,9 @@ export function isPathInsideAnyRoot(candidate: string, roots: string[]): { ok: t
 }
 
 function realOrResolved(value: string) {
-  return fs.existsSync(value) ? fs.realpathSync(value) : path.resolve(value);
+  let resolved = fs.existsSync(value) ? fs.realpathSync(value) : path.resolve(value);
+  if (process.platform === "win32") {
+    resolved = resolved.charAt(0).toLowerCase() + resolved.slice(1);
+  }
+  return resolved;
 }

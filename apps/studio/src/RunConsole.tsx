@@ -3,8 +3,10 @@ import {
   MarketplaceClient,
   type BenchmarkResult,
   type DiscoveredModel,
+  type EngineResidencyPlan,
   type EngineRuntimeConfig,
   type HotPoolStatus,
+  type LlamaServerPoolStatus,
   type LlamaServerStatus,
   type QueueStatus,
   type RuntimeModel,
@@ -247,6 +249,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   const [runtimeControlsDirty, setRuntimeControlsDirty] = useState(false);
   const [keepWarm, setKeepWarm] = useState(true);
   const [backend, setBackend] = useState<EngineRuntimeConfig["backend"]>("in-process");
+  const [residencyMode, setResidencyMode] = useState<EngineRuntimeConfig["residencyMode"]>("balanced");
   const [delegatedEnabled, setDelegatedEnabled] = useState(false);
   const [delegatedPort, setDelegatedPort] = useState(8080);
   const [delegatedParallel, setDelegatedParallel] = useState(4);
@@ -263,7 +266,9 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   const [queue, setQueue] = useState<QueueStatus | undefined>();
   const [runtimeConfig, setRuntimeConfig] = useState<EngineRuntimeConfig | undefined>();
   const [serverStatus, setServerStatus] = useState<LlamaServerStatus | undefined>();
+  const [serverPool, setServerPool] = useState<LlamaServerPoolStatus | undefined>();
   const [hotPool, setHotPool] = useState<HotPoolStatus | undefined>();
+  const [residencyPlan, setResidencyPlan] = useState<EngineResidencyPlan | undefined>();
   const [systemScan, setSystemScan] = useState<SystemScan | undefined>();
   const streamRef = useRef<HTMLDivElement>(null);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -295,19 +300,23 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       const engine = runtimes.find((runtime) => runtime.id === "llamacpp");
       const ollama = runtimes.find((runtime) => runtime.id === "ollama");
       const nextLoadedModel = engine?.loadedModels?.[0];
-      const [configResult, serverResult, routeResult, queueResult, scanResult, hotPoolResult] = await Promise.allSettled([
+      const [configResult, serverResult, poolResult, routeResult, queueResult, scanResult, hotPoolResult, residencyResult] = await Promise.allSettled([
         client.engineConfig(),
         client.engineServerStatus(),
+        client.engineServerPoolStatus(),
         client.standardRoute(),
         client.queueStatus(),
         client.systemScan(),
-        client.hotPoolStatus()
+        client.hotPoolStatus(),
+        client.engineResidency()
       ]);
       if (configResult.status === "fulfilled") setRuntimeConfig(configResult.value.config);
       if (serverResult.status === "fulfilled") setServerStatus(serverResult.value);
+      if (poolResult.status === "fulfilled") setServerPool(poolResult.value);
       if (queueResult.status === "fulfilled") setQueue(queueResult.value);
       if (scanResult.status === "fulfilled") setSystemScan(scanResult.value);
       if (hotPoolResult.status === "fulfilled") setHotPool(hotPoolResult.value);
+      if (residencyResult.status === "fulfilled") setResidencyPlan(residencyResult.value.plan);
       if (routeResult.status === "fulfilled") {
         setStandardRoute(routeResult.value);
         setStandardRouteError(undefined);
@@ -341,6 +350,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         gpuLayers: gpuLayers === -1 ? "auto" : gpuLayers,
         draftModel: draftModelPath || null,
         backend,
+        residencyMode,
         delegatedServer: {
           enabled: delegatedEnabled,
           port: delegatedPort,
@@ -376,6 +386,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     hotPoolMaxGb,
     hotPoolMaxModels,
     keepWarm,
+    residencyMode,
     runtimeConfig,
     threads
   ]);
@@ -422,6 +433,35 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       setBusy(null);
     }
   }, []);
+
+  const warmLlamaServerPool = useCallback(async () => {
+    setBusy("Warming llama-server pool...");
+    setError(undefined);
+    try {
+      if (runtimeControlsDirty) await saveRuntimeControls();
+      const status = await client.warmEngineServerPool();
+      setServerPool(status);
+      await refreshStatus();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [refreshStatus, runtimeControlsDirty, saveRuntimeControls]);
+
+  const stopLlamaServerPool = useCallback(async () => {
+    setBusy("Stopping llama-server pool...");
+    setError(undefined);
+    try {
+      const status = await client.stopEngineServerPool();
+      setServerPool(status);
+      await refreshStatus();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [refreshStatus]);
 
   const setIconLabelsPreference = useCallback((next: boolean) => {
     setIconLabels(next);
@@ -473,6 +513,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     setDraftModelPath(runtimeConfig.draftModel || "");
     setKeepWarm(runtimeConfig.keepWarm);
     setBackend(runtimeConfig.backend);
+    setResidencyMode(runtimeConfig.residencyMode || "balanced");
     setDelegatedEnabled(runtimeConfig.delegatedServer.enabled);
     setDelegatedPort(runtimeConfig.delegatedServer.port);
     setDelegatedParallel(runtimeConfig.delegatedServer.parallel);
@@ -796,11 +837,18 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         gpuLayers: "auto",
         draftModel: draftModelPath || null,
         backend,
+        residencyMode: "fast-parallel",
         delegatedServer: {
           enabled: delegatedEnabled,
           port: delegatedPort,
           parallel: delegatedParallel,
           continuousBatching: delegatedBatching
+        },
+        hotPool: {
+          enabled: true,
+          maxModels: 2,
+          maxModelBytes: Math.round(hotPoolMaxGb * 1024 ** 3),
+          autoWarm
         }
       });
       setRuntimeConfig(nextConfig.config);
@@ -811,6 +859,9 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
       setMaxTokens(96);
       setTemperature(0.5);
       setPreset("fast");
+      setResidencyMode("fast-parallel");
+      setHotPoolEnabled(true);
+      setHotPoolMaxModels(2);
       setRuntimeControlsDirty(false);
       await refreshStatus();
       if (benchmarkTarget) await warmStandardRoute("quiet");
@@ -827,6 +878,8 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     delegatedParallel,
     delegatedPort,
     draftModelPath,
+    autoWarm,
+    hotPoolMaxGb,
     refreshStatus,
     runtimeConfig,
     warmStandardRoute
@@ -1124,11 +1177,21 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 ? `${systemScan.os.cpuCount} CPU threads available`
                 : "System scan pending"}
           </p>
-          {hotPool && hotPool.entries.length > 0 && (
-            <p className="run-sub">
-              Hot pool: {hotPool.entries.map((entry) => `${entry.model} (${entry.state})`).join(" | ")}
-            </p>
-          )}
+            {hotPool && hotPool.entries.length > 0 && (
+              <p className="run-sub">
+                Hot pool: {hotPool.entries.map((entry) => `${entry.model} (${entry.state})`).join(" | ")}
+              </p>
+            )}
+            {residencyPlan && (
+              <p className="run-sub">
+                Residency: {residencyPlan.mode}; selected {residencyPlan.selected.map((candidate) => candidate.model.name).join(", ") || "none"}; VRAM free {formatBytes(residencyPlan.memory.freeVramBytes)}
+              </p>
+            )}
+            {serverPool && serverPool.entries.length > 0 && (
+              <p className="run-sub">
+                Server pool: {serverPool.entries.map((entry) => `${entry.model} (${entry.state}:${entry.port})`).join(" | ")}
+              </p>
+            )}
         </div>
       </section>
 
@@ -1445,6 +1508,23 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 <option value="delegated-server">Delegated llama-server</option>
               </select>
             </label>
+            <label className="run-field">
+              <span>Residency</span>
+              <select
+                value={residencyMode}
+                onChange={(e) => {
+                  const nextMode = e.target.value as EngineRuntimeConfig["residencyMode"];
+                  setRuntimeControlsDirty(true);
+                  setResidencyMode(nextMode);
+                  if (nextMode === "quality-single") setHotPoolMaxModels(1);
+                  if (nextMode === "fast-parallel") setHotPoolEnabled(true);
+                }}
+              >
+                <option value="balanced">Balanced</option>
+                <option value="fast-parallel">Fast parallel</option>
+                <option value="quality-single">Quality single</option>
+              </select>
+            </label>
             <label className="run-check-field">
               <input
                 type="checkbox"
@@ -1544,11 +1624,11 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
             </label>
           </div>
           <p className="run-runtime-tip">
-            {iconLabels ? `${RUN_ICONS.bulb} ` : ""}Tip: lower context size to 512 or 1024 for faster simple prompts. A compatible draft model can speed up heavier models when the backend supports speculative decoding.
+            {iconLabels ? `${RUN_ICONS.bulb} ` : ""}Tip: Fast parallel keeps several smaller models hot when memory allows. Quality single favors the strongest allowed model and avoids competing hot slots.
           </p>
           <div className="run-runtime-actions">
             <small>
-              Runtime config: {runtimeConfig?.backend || "in-process"} | delegated server {serverStatus?.running ? "running" : serverStatus?.available ? "ready" : "missing"}
+              Runtime config: {runtimeConfig?.backend || "in-process"} | residency {runtimeConfig?.residencyMode || "balanced"} | delegated server {serverStatus?.running ? "running" : serverStatus?.available ? "ready" : "missing"}
               {runtimeControlsDirty ? " | unsaved changes" : ""}
             </small>
             {!serverStatus?.available && (
@@ -1564,6 +1644,14 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
             {serverStatus?.running && (
               <button className="run-btn ghost small" type="button" onClick={() => void stopLlamaServer()} disabled={Boolean(busy)}>
                 Stop llama-server
+              </button>
+            )}
+            <button className="run-btn secondary small" type="button" onClick={() => void warmLlamaServerPool()} disabled={Boolean(busy)}>
+              Warm server pool
+            </button>
+            {serverPool && serverPool.entries.length > 0 && (
+              <button className="run-btn ghost small" type="button" onClick={() => void stopLlamaServerPool()} disabled={Boolean(busy)}>
+                Stop server pool
               </button>
             )}
             <button className="run-btn secondary small" type="button" onClick={() => void saveRuntimeControls()} disabled={Boolean(busy)}>

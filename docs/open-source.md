@@ -53,6 +53,37 @@ or:
 npx htlm-daemon
 ```
 
+## Terminal And Project Integration Contract
+
+The marketplace must work without the Studio UI. The supported terminal lifecycle is:
+
+```powershell
+npx htlm status
+npx htlm search "qwen coder"
+npx htlm files Qwen/Qwen2.5-0.5B-Instruct-GGUF
+npx htlm pull qwen2.5:0.5b
+npx htlm downloads
+npx htlm inventory
+npx htlm verify <artifact-id>
+npx htlm load <artifact-id>
+npx htlm run <model> "hi"
+npx htlm rm <artifact-id>
+```
+
+`npx htlm init --target auto` writes the shared config file and prints the right integration shape for the current folder. Explicit targets are:
+
+| Target | Use when |
+| --- | --- |
+| `react` | React component host |
+| `vite` | Vite React app |
+| `next` | Next.js client component |
+| `html` | Plain HTML or any server-rendered framework that can load a custom element |
+| `terminal` | CLI-only, backend, agent, CI, or script-first project |
+
+This keeps the daemon, CLI, SDK, React component, and Web Component as equal product surfaces. A marketplace feature is not complete until it has a terminal/API path and an embeddable project path where practical.
+
+For the full profile matrix, see [`integration-profiles.md`](integration-profiles.md). For Hermes-style agents, coding agents, local chat UIs, workflow runners, and other OpenAI-compatible clients, see [`agent-integration.md`](agent-integration.md).
+
 ## Hugging Face And Ollama Expectations
 
 Hugging Face catalog behavior should stay configurable through source defaults and backend environment settings. The UI should not hardcode one model family, one author, or one quantization choice as the only path.
@@ -87,6 +118,7 @@ The release check verifies typecheck, tests, builds, dry-pack contents, and an e
 - `@ht-llm-marketplace/cli`
 
 The external smoke installs packed tarballs into `artifacts/package-smoke`, imports SDK/React package APIs, runs the CLI help command, and starts the daemon bin on a free loopback port.
+`npm run smoke:cli-marketplace` additionally verifies terminal catalog search, file listing, download listing, artifact verification, artifact reveal, artifact load, and project-target initialization against a fake daemon.
 
 ## Contribution Workflow
 

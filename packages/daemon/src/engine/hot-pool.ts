@@ -1,6 +1,7 @@
-import type { EngineRuntimeConfig, ModelIndexEntry } from "@ht-llm-marketplace/sdk";
+import type { EngineResidencyPlan, EngineRuntimeConfig, ModelIndexEntry, SystemScan } from "@ht-llm-marketplace/sdk";
 import { LlamaEngine, type EngineChatOptions } from "./llama.js";
 import type { ChatMessage } from "./messages.js";
+import { planResidency } from "../runtime/residency.js";
 
 export interface HotPoolEntry {
   model: string;
@@ -18,6 +19,8 @@ export interface HotPoolStatus {
   enabled: boolean;
   maxModels: number;
   maxModelBytes: number;
+  residencyMode: EngineRuntimeConfig["residencyMode"];
+  residencyPlan?: EngineResidencyPlan;
   entries: HotPoolEntry[];
 }
 
@@ -29,26 +32,40 @@ interface HotSlot {
 
 export class HotModelPool {
   private readonly slots = new Map<string, HotSlot>();
+  private lastPlan?: EngineResidencyPlan;
 
   status(config: EngineRuntimeConfig): HotPoolStatus {
     return {
       enabled: config.hotPool.enabled,
       maxModels: config.hotPool.maxModels,
       maxModelBytes: config.hotPool.maxModelBytes,
+      residencyMode: config.residencyMode,
+      residencyPlan: this.lastPlan,
       entries: [...this.slots.values()].map((slot) => ({ ...slot.entry }))
     };
   }
 
-  async warm(models: ModelIndexEntry[], config: EngineRuntimeConfig): Promise<HotPoolStatus> {
+  async warm(models: ModelIndexEntry[], config: EngineRuntimeConfig, scan?: SystemScan): Promise<HotPoolStatus> {
     if (!config.hotPool.enabled) return this.status(config);
-    const candidates = models
-      .filter((model) => model.runnable && !model.path.startsWith("virtual:") && model.sizeBytes <= config.hotPool.maxModelBytes)
-      .slice(0, config.hotPool.maxModels);
+    this.lastPlan = planResidency(models, config, this.status(config).entries, scan);
+    if (config.residencyMode === "quality-single") {
+      await this.unloadUnselected(this.lastPlan.selected.map((candidate) => candidate.model));
+    }
+    const candidates = this.lastPlan.selected.map((candidate) => candidate.model);
     for (const model of candidates) {
       await this.ensureLoaded(model, config);
     }
     await this.trim(config);
     return this.status(config);
+  }
+
+  private async unloadUnselected(selectedModels: ModelIndexEntry[]) {
+    const selected = new Set(selectedModels.map((model) => normalize(model.name)));
+    for (const slot of [...this.slots.values()]) {
+      if (slot.entry.state !== "ready" || selected.has(normalize(slot.entry.model))) continue;
+      this.slots.delete(normalize(slot.entry.model));
+      await slot.engine.unload().catch(() => undefined);
+    }
   }
 
   has(modelName: string): boolean {
@@ -136,6 +153,10 @@ export class HotModelPool {
       return normalize(slot.entry.model) === wanted || normalize(slot.entry.path) === wanted;
     });
   }
+}
+
+export function selectHotPoolCandidates(models: ModelIndexEntry[], config: EngineRuntimeConfig): ModelIndexEntry[] {
+  return planResidency(models, config).selected.map((candidate) => candidate.model);
 }
 
 function normalize(value: string) {

@@ -130,7 +130,9 @@ export class DownloadManager extends EventEmitter {
           for (const filename of filenames) {
             const targetPath = path.join(targetDir, filename.split("/").map(safeSegment).join(path.sep));
             const partPath = targetPath + ".part";
+            const etagPath = partPath + ".etag";
             if (fs.existsSync(partPath)) fs.rmSync(partPath, { force: true });
+            if (fs.existsSync(etagPath)) fs.rmSync(etagPath, { force: true });
           }
         } else if (request.source === "ollama-registry") {
           const ref = request.ref!;
@@ -138,7 +140,9 @@ export class DownloadManager extends EventEmitter {
           const targetDir = path.join(this.config.modelsDir, "ollama-library", safeSegment(resolved.model));
           const targetPath = path.join(targetDir, `${safeSegment(resolved.name)}.gguf`);
           const partPath = targetPath + ".part";
+          const etagPath = partPath + ".etag";
           if (fs.existsSync(partPath)) fs.rmSync(partPath, { force: true });
+          if (fs.existsSync(etagPath)) fs.rmSync(etagPath, { force: true });
         }
       } catch {
         // Ignored
@@ -192,6 +196,10 @@ export class DownloadManager extends EventEmitter {
         if (fs.existsSync(partPath)) {
           fs.renameSync(partPath, targetPath);
         }
+        const etagPath = partPath + ".etag";
+        if (fs.existsSync(etagPath)) {
+          fs.rmSync(etagPath, { force: true });
+        }
         const sha256 = await sha256File(targetPath);
         const artifact = this.store.upsertArtifact({
           source: "ollama-registry",
@@ -226,6 +234,8 @@ export class DownloadManager extends EventEmitter {
           return;
         }
         if (fs.existsSync(partPath)) fs.rmSync(partPath, { force: true });
+        const etagPath = partPath + ".etag";
+        if (fs.existsSync(etagPath)) fs.rmSync(etagPath, { force: true });
         this.save({ ...job, status: "failed", message: (error as Error).message, updatedAt: new Date().toISOString() });
         this.active.delete(job.id);
         this.emit("change");
@@ -240,8 +250,28 @@ export class DownloadManager extends EventEmitter {
     signal: AbortSignal
   ): Promise<{ sizeBytes: number }> {
     let existingBytes = 0;
+    const etagPath = partPath + ".etag";
     if (fs.existsSync(partPath)) {
       existingBytes = fs.statSync(partPath).size;
+    }
+
+    if (existingBytes > 0 && fs.existsSync(etagPath)) {
+      try {
+        const savedEtag = fs.readFileSync(etagPath, "utf8").trim();
+        const probe = await fetchWithTimeout(url, { method: "HEAD", signal, timeoutMs: 10_000 });
+        if (probe.ok) {
+          const remoteEtag = probe.headers.get("etag")?.trim();
+          const remoteLength = Number(probe.headers.get("content-length"));
+          const expectedLength = job.totalBytes;
+          if ((remoteEtag && savedEtag && remoteEtag !== savedEtag) || (remoteLength && expectedLength && remoteLength !== expectedLength)) {
+            fs.rmSync(partPath, { force: true });
+            fs.rmSync(etagPath, { force: true });
+            existingBytes = 0;
+          }
+        }
+      } catch (err) {
+        // Fallback gracefully
+      }
     }
 
     const headers: Record<string, string> = {};
@@ -260,6 +290,13 @@ export class DownloadManager extends EventEmitter {
     const isPartial = response.status === 206;
     const incomingBytes = Number(response.headers.get("content-length")) || 0;
     const totalBytes = isPartial ? existingBytes + incomingBytes : incomingBytes || job.totalBytes || undefined;
+
+    const etag = response.headers.get("etag")?.trim();
+    if (etag) {
+      try {
+        fs.writeFileSync(etagPath, etag, "utf8");
+      } catch {}
+    }
 
     const writer = fs.createWriteStream(partPath, { flags: isPartial ? "a" : "w" });
     const reader = response.body.getReader();
@@ -461,7 +498,9 @@ export class DownloadManager extends EventEmitter {
         }
         for (const partTargetPath of targetPaths) {
           const partPath = partTargetPath + ".part";
+          const etagPath = partPath + ".etag";
           if (fs.existsSync(partPath)) fs.rmSync(partPath, { force: true });
+          if (fs.existsSync(etagPath)) fs.rmSync(etagPath, { force: true });
           if (fs.existsSync(partTargetPath)) fs.rmSync(partTargetPath, { force: true });
         }
         this.save({ ...job, status: "failed", message: (error as Error).message, updatedAt: new Date().toISOString() });
@@ -501,6 +540,10 @@ export class DownloadManager extends EventEmitter {
       if (fs.existsSync(partPath)) {
         fs.renameSync(partPath, partTargetPath);
       }
+      const etagPath = partPath + ".etag";
+      if (fs.existsSync(etagPath)) {
+        fs.rmSync(etagPath, { force: true });
+      }
       downloadedBytes += result.sizeBytes;
     }
 
@@ -522,8 +565,28 @@ export class DownloadManager extends EventEmitter {
     const url = huggingFaceResolveUrl(safeRepoId, safeRevision, safeFilename);
     
     let existingBytes = 0;
+    const etagPath = partPath + ".etag";
     if (fs.existsSync(partPath)) {
       existingBytes = fs.statSync(partPath).size;
+    }
+
+    if (existingBytes > 0 && fs.existsSync(etagPath)) {
+      try {
+        const savedEtag = fs.readFileSync(etagPath, "utf8").trim();
+        const probe = await fetchWithTimeout(url, { method: "HEAD", signal, timeoutMs: 10_000 });
+        if (probe.ok) {
+          const remoteEtag = probe.headers.get("etag")?.trim();
+          const remoteLength = Number(probe.headers.get("content-length"));
+          const expectedLength = batch?.expectedSizeBytes;
+          if ((remoteEtag && savedEtag && remoteEtag !== savedEtag) || (remoteLength && expectedLength && remoteLength !== expectedLength)) {
+            fs.rmSync(partPath, { force: true });
+            fs.rmSync(etagPath, { force: true });
+            existingBytes = 0;
+          }
+        }
+      } catch (err) {
+        // Fallback gracefully
+      }
     }
 
     const headers: Record<string, string> = {};
@@ -542,6 +605,13 @@ export class DownloadManager extends EventEmitter {
     const isPartial = response.status === 206;
     const incomingBytes = Number(response.headers.get("content-length")) || 0;
     const totalBytes = batch?.expectedSizeBytes ?? (isPartial ? existingBytes + incomingBytes : incomingBytes || undefined);
+
+    const etag = response.headers.get("etag")?.trim();
+    if (etag) {
+      try {
+        fs.writeFileSync(etagPath, etag, "utf8");
+      } catch {}
+    }
 
     const writer = fs.createWriteStream(partPath, { flags: isPartial ? "a" : "w" });
     const reader = response.body.getReader();

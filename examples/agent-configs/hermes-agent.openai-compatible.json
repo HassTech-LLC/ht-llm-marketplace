@@ -1,0 +1,10 @@
+{
+  "provider": "openai-compatible",
+  "baseUrl": "http://127.0.0.1:3001/v1",
+  "apiKey": "local-not-needed",
+  "model": "replace-with-model-from-htlm-list",
+  "notes": [
+    "Use this shape for Hermes-style agents that can point at an OpenAI-compatible local server.",
+    "Run `npx htlm status`, `npx htlm list`, and `npx htlm load <artifact-id>` before starting long agent jobs."
+  ]
+}

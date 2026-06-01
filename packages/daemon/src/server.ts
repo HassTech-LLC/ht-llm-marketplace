@@ -46,7 +46,9 @@ import { fetchTextWithLimit, fetchWithTimeout, README_RESPONSE_LIMIT, responseTe
 import { estimateTokens as estimateResponseTokens, inputToMessages, responseObject, streamEvents } from "./responses/adapter.js";
 import type { LocalResponsesRequest } from "./responses/types.js";
 import { installManagedLlamaServer, llamaServerManagedRoot, LlamaServerManager } from "./runtime/llama-server.js";
+import { LlamaServerPool, llamaServerPoolSearchRoots } from "./runtime/llama-server-pool.js";
 import { sanitizeRuntimeConfig } from "./runtime/config.js";
+import { planResidency } from "./runtime/residency.js";
 import { MarketplaceStore } from "./store.js";
 import {
   dryRunHuggingFaceDownload,
@@ -72,6 +74,7 @@ export interface RuntimeContext {
   queue: GenerationQueue;
   embeddings: Promise<EmbeddingProvider | undefined>;
   llamaServer: LlamaServerManager;
+  llamaServerPool: LlamaServerPool;
 }
 
 // Read the daemon's version from its own package.json once at module load so
@@ -109,6 +112,7 @@ export function createContext(config: DaemonConfig): RuntimeContext {
     port: process.env.LLAMA_SERVER_PORT ? Number(process.env.LLAMA_SERVER_PORT) : undefined,
     searchRoots: [llamaServerManagedRoot(config.storageDir), process.cwd(), config.storageDir, config.modelsDir]
   });
+  const llamaServerPool = new LlamaServerPool();
   const modelIndex = new ModelIndex(() =>
     defaultModelRoots({
       modelsDir: config.modelsDir,
@@ -123,8 +127,8 @@ export function createContext(config: DaemonConfig): RuntimeContext {
     void engine.probe();
   }
   void modelIndex.refresh("startup");
-  void warmHotPool({ config, store, ollama, lmstudio, downloads, engine, hotPool, modelIndex, queue, embeddings, llamaServer }).catch(() => undefined);
-  return { config, store, ollama, lmstudio, downloads, engine, hotPool, modelIndex, queue, embeddings, llamaServer };
+  void warmHotPool({ config, store, ollama, lmstudio, downloads, engine, hotPool, modelIndex, queue, embeddings, llamaServer, llamaServerPool }).catch(() => undefined);
+  return { config, store, ollama, lmstudio, downloads, engine, hotPool, modelIndex, queue, embeddings, llamaServer, llamaServerPool };
 }
 
 export function createServer(context: RuntimeContext) {
@@ -209,6 +213,15 @@ export function createServer(context: RuntimeContext) {
         return json(response, await warmHotPool(context));
       }
 
+      if (route === "GET /api/engine/residency") {
+        const config = context.store.getRuntimeConfig();
+        const plan = await residencyPlanForContext(context);
+        return json(response, {
+          plan,
+          hotPool: context.hotPool.status(config)
+        });
+      }
+
       if (route === "GET /api/queue") {
         return json(response, context.queue.status());
       }
@@ -288,6 +301,11 @@ export function createServer(context: RuntimeContext) {
       const verifyArtifactMatch = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/verify$/);
       if (request.method === "POST" && verifyArtifactMatch) {
         return json(response, { verification: await verifyArtifact(context, decodeURIComponent(verifyArtifactMatch[1])) });
+      }
+
+      const revealArtifactMatch = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/reveal$/);
+      if (request.method === "POST" && revealArtifactMatch) {
+        return json(response, await revealArtifact(context, decodeURIComponent(revealArtifactMatch[1])));
       }
 
       if (route === "GET /api/downloads") {
@@ -445,6 +463,11 @@ export function createServer(context: RuntimeContext) {
         return json(response, context.llamaServer.status());
       }
 
+      if (route === "GET /api/engine/server/pool") {
+        const config = context.store.getRuntimeConfig();
+        return json(response, context.llamaServerPool.status(config.delegatedServer.enabled));
+      }
+
       if (route === "POST /api/engine/server/install") {
         const body = await readJson<unknown>(request, 64_000);
         const result = await installManagedLlamaServer(context.config.storageDir, sanitizeLlamaServerInstallRequest(body));
@@ -459,6 +482,15 @@ export function createServer(context: RuntimeContext) {
 
       if (route === "POST /api/engine/server/stop") {
         return json(response, await context.llamaServer.stop());
+      }
+
+      if (route === "POST /api/engine/server/pool/warm") {
+        return json(response, await warmLlamaServerPool(context));
+      }
+
+      if (route === "POST /api/engine/server/pool/stop") {
+        const config = context.store.getRuntimeConfig();
+        return json(response, await context.llamaServerPool.stopAll(config.delegatedServer.enabled));
       }
 
       if (route === "POST /api/runtimes/llamacpp/load") {
@@ -573,11 +605,12 @@ export function createServer(context: RuntimeContext) {
       }
 
       if (route === "POST /v1/embeddings") {
+        const body = requireObject<Record<string, unknown>>(await readJson<unknown>(request, 512_000));
         const provider = await context.embeddings;
         if (!provider) {
-          const delegated = await delegatedBackend(context, { autoStart: false });
+          const delegated = await delegatedBackend(context, { autoStart: false, model: typeof body.model === "string" ? body.model : undefined });
           if (delegated && "endpoint" in delegated) {
-            return proxyJsonRequest(request, response, `${delegated.endpoint}/v1/embeddings`, await readJson<unknown>(request, 512_000));
+            return proxyJsonRequest(request, response, `${delegated.endpoint}/v1/embeddings`, body);
           }
           return json(
             response,
@@ -591,7 +624,6 @@ export function createServer(context: RuntimeContext) {
             501
           );
         }
-        const body = requireObject<Record<string, unknown>>(await readJson<unknown>(request, 512_000));
         const input = normalizeEmbeddingInput(body.input as LocalEmbeddingRequest["input"]);
         const dimensions = optionalClampedInt(body.dimensions, "dimensions", 1, 8192);
         const result = await provider.embed(input, { dimensions });
@@ -670,6 +702,7 @@ async function serverReadiness(context: RuntimeContext) {
   const runtimeConfig = context.store.getRuntimeConfig();
   const engineRuntime = runtimes.find((runtime) => runtime.id === "llamacpp");
   const llamaServer = context.llamaServer.status();
+  const llamaServerPool = context.llamaServerPool.status(runtimeConfig.delegatedServer.enabled);
   const queue = context.queue.status();
   const hotPool = context.hotPool.status(runtimeConfig);
   const localRunnableModels = models.filter((model) => model.runnable && !model.path.startsWith("virtual:"));
@@ -694,7 +727,9 @@ async function serverReadiness(context: RuntimeContext) {
   const blockers: string[] = [];
   if (!engineRuntime?.online) blockers.push("Built-in llama.cpp engine is not available.");
   if (localRunnableModels.length === 0) blockers.push("No runnable local GGUF models are indexed.");
-  if (runtimeConfig.backend === "delegated-server" && !llamaServer.running) blockers.push("Delegated llama-server backend is selected but not running.");
+  if (runtimeConfig.backend === "delegated-server" && !llamaServer.running && !llamaServerPool.entries.some((entry) => entry.state === "running")) {
+    blockers.push("Delegated llama-server backend is selected but no delegated server process is running.");
+  }
   const warnings: string[] = [];
   if ((queue.queued?.length || 0) > 0) warnings.push(`${queue.queued.length} generation request(s) are currently queued.`);
   if (hotPool.enabled && hotPool.entries.filter((entry) => entry.state === "ready").length === 0) {
@@ -708,7 +743,8 @@ async function serverReadiness(context: RuntimeContext) {
     runtime: {
       engineAvailable: Boolean(engineRuntime?.online),
       engineLoadedModel: context.engine.loadedModel || null,
-      delegatedServer: llamaServer
+      delegatedServer: llamaServer,
+      delegatedServerPool: llamaServerPool
     },
     models: {
       indexed: models.length,
@@ -737,12 +773,33 @@ function standardRouteDecision(context: RuntimeContext, models = context.modelIn
 
 async function warmHotPool(context: RuntimeContext) {
   const config = context.store.getRuntimeConfig();
-  if (!context.hotPool || !config.hotPool?.enabled) return context.hotPool?.status(config) ?? { enabled: false, maxModels: 0, maxModelBytes: 0, entries: [] };
+  if (!context.hotPool || !config.hotPool?.enabled) {
+    return context.hotPool?.status(config) ?? { enabled: false, maxModels: 0, maxModelBytes: 0, residencyMode: config.residencyMode, entries: [] };
+  }
+  const plan = await residencyPlanForContext(context);
+  return context.hotPool.warm(plan.selected.map((candidate) => candidate.model), config, plan.memory.source === "system-scan" ? await scanSystem(context.config.modelsDir, []) : undefined);
+}
+
+async function residencyPlanForContext(context: RuntimeContext) {
+  const config = context.store.getRuntimeConfig();
   const decision = standardRouteDecision(context, await context.modelIndex.models());
   const models = decision.candidates
     .filter((candidate) => candidate.healthy)
     .map((candidate) => candidate.model);
-  return context.hotPool.warm(models, config);
+  const scan = await scanSystem(context.config.modelsDir, []);
+  return planResidency(models, config, context.hotPool.status(config).entries, scan);
+}
+
+async function warmLlamaServerPool(context: RuntimeContext) {
+  const config = context.store.getRuntimeConfig();
+  const plan = await residencyPlanForContext(context);
+  return context.llamaServerPool.warm(plan, {
+    binaryPath: process.env.LLAMA_SERVER_BIN,
+    basePort: config.delegatedServer.port,
+    parallel: config.delegatedServer.parallel,
+    continuousBatching: config.delegatedServer.continuousBatching,
+    searchRoots: llamaServerPoolSearchRoots(context.config.storageDir, process.cwd(), context.config.modelsDir)
+  });
 }
 
 function ollamaModelSummary(model: {
@@ -826,6 +883,9 @@ function ollamaRunningModels(context: RuntimeContext) {
   if (delegated.running) {
     push({ name: context.engine.loadedModel || "delegated-llama-server" });
   }
+  for (const entry of context.llamaServerPool.status(config.delegatedServer.enabled).entries) {
+    if (entry.state === "running") push({ name: entry.model });
+  }
   return { models: [...loaded.values()] };
 }
 
@@ -845,10 +905,25 @@ async function configureLlamaServer(context: RuntimeContext) {
 
 async function delegatedBackend(
   context: RuntimeContext,
-  options: { autoStart?: boolean } = {}
+  options: { autoStart?: boolean; model?: string } = {}
 ): Promise<{ endpoint: string } | { status: number; message: string } | undefined> {
   const config = context.store.getRuntimeConfig();
   if (config.backend !== "delegated-server" && !config.delegatedServer.enabled) return undefined;
+  const pooledEndpoint = context.llamaServerPool.endpointForModel(options.model);
+  if (pooledEndpoint) return { endpoint: pooledEndpoint };
+  if (config.delegatedServer.enabled && options.autoStart !== false) {
+    const pool = await warmLlamaServerPool(context);
+    const endpoint = context.llamaServerPool.endpointForModel(options.model) || pool.entries.find((entry) => entry.state === "running")?.endpoint;
+    if (endpoint) return { endpoint };
+    if (pool.entries.some((entry) => entry.state === "starting")) {
+      const readyEndpoint = await waitForPoolEndpoint(context, options.model, 90_000);
+      if (readyEndpoint) return { endpoint: readyEndpoint };
+      return {
+        status: 503,
+        message: "Delegated llama-server pool is still starting and did not become healthy in time."
+      };
+    }
+  }
   await configureLlamaServer(context);
   let status = context.llamaServer.status();
   if (!status.running && options.autoStart !== false && status.available) {
@@ -879,6 +954,18 @@ async function delegatedBackend(
   return {
     endpoint: status.endpoint
   };
+}
+
+async function waitForPoolEndpoint(context: RuntimeContext, model: string | undefined, timeoutMs: number) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const endpoint = context.llamaServerPool.endpointForModel(model);
+    if (endpoint) return endpoint;
+    const status = context.llamaServerPool.status(true);
+    if (status.entries.length > 0 && status.entries.every((entry) => entry.state !== "starting")) return undefined;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return undefined;
 }
 
 async function waitForDelegatedHealth(endpoint: string, timeoutMs: number) {
@@ -1034,7 +1121,7 @@ async function ollamaGenerate(
     proxyBody: Record<string, unknown>;
   }
 ) {
-  const delegated = await delegatedBackend(context);
+  const delegated = await delegatedBackend(context, { model: body.model });
   if (delegated && "status" in delegated) return json(response, { error: delegated.message }, delegated.status);
   if (delegated) return delegatedOllamaGenerate(request, response, delegated.endpoint, body);
 
@@ -1076,7 +1163,7 @@ async function engineChat(
   body: { messages?: ChatMessage[]; model?: string; stream?: boolean; artifactId?: string; path?: string; systemPrompt?: string; gpuLayers?: number; contextSize?: number; threads?: number; maxTokens?: number; temperature?: number }
 ) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const delegated = await delegatedBackend(context);
+  const delegated = await delegatedBackend(context, { model: body.model });
   if (delegated && "status" in delegated) return json(response, { error: delegated.message }, delegated.status);
   if (delegated) return delegatedOllamaChat(request, response, delegated.endpoint, body);
 
@@ -1384,7 +1471,7 @@ async function openAiLegacyCompletions(
 ) {
   const parsed = sanitizeOpenAiCompletionRequest(body);
   const messages: ChatMessage[] = [{ role: "user", content: parsed.prompt }];
-  const delegated = await delegatedBackend(context);
+  const delegated = await delegatedBackend(context, { model: parsed.model });
   if (delegated && "status" in delegated) {
     return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
   }
@@ -1731,7 +1818,7 @@ async function openAiChat(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
-  const delegated = await delegatedBackend(context);
+  const delegated = await delegatedBackend(context, { model: parsed.model });
   if (delegated && "status" in delegated) {
     return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
   }
@@ -1840,7 +1927,7 @@ async function openAiResponses(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
-  const delegated = await delegatedBackend(context);
+  const delegated = await delegatedBackend(context, { model: parsed.model });
   if (delegated && "status" in delegated) {
     return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
   }
@@ -1994,6 +2081,37 @@ async function verifyArtifact(context: RuntimeContext, artifactId: string) {
     verifiedAt: new Date().toISOString(),
     message: status === "verified" ? "Artifact bytes and hash were verified locally." : "Artifact byte count does not match expected size."
   });
+}
+
+async function revealArtifact(context: RuntimeContext, artifactId: string) {
+  const artifact = context.store.getArtifact(artifactId);
+  if (!artifact) throw httpError(404, `Artifact not found: ${artifactId}`);
+  if (!artifact.path || !fs.existsSync(artifact.path)) throw httpError(400, "Artifact path is missing.");
+
+  const stat = fs.statSync(artifact.path);
+  const targetDir = stat.isDirectory() ? artifact.path : path.dirname(artifact.path);
+  let command: string;
+  let args: string[];
+
+  if (process.platform === "win32") {
+    command = "explorer.exe";
+    args = stat.isDirectory() ? [artifact.path] : ["/select,", artifact.path];
+  } else if (process.platform === "darwin") {
+    command = "open";
+    args = [targetDir];
+  } else {
+    command = "xdg-open";
+    args = [targetDir];
+  }
+
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+  child.unref();
+  context.store.audit("artifact-revealed", artifact.name, { artifactId, path: artifact.path, targetDir });
+  return { ok: true, message: "Opened artifact location." };
 }
 
 async function inventory(context: RuntimeContext) {
@@ -2396,6 +2514,7 @@ function isPrivilegedRoute(method: string, pathname: string) {
     pathname === "/api/runtimes/ollama/server/start" ||
     pathname === "/api/runtimes/lmstudio/server/start" ||
     pathname === "/api/engine/upgrade" ||
+    /^\/api\/artifacts\/[^/]+\/reveal$/.test(pathname) ||
     /^\/api\/delete-plans\/[^/]+\/confirm$/.test(pathname)
   );
 }

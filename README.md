@@ -41,7 +41,7 @@ From a consuming app after packages are published:
 
 ```powershell
 npm install @ht-llm-marketplace/cli @ht-llm-marketplace/react
-npx htlm init
+npx htlm init --target auto
 npx htlm start
 ```
 
@@ -102,10 +102,37 @@ Web Component:
 For project setup:
 
 ```powershell
-npx @ht-llm-marketplace/cli init
+npx @ht-llm-marketplace/cli init --target auto
 ```
 
+Target options are `react`, `vite`, `next`, `html`, `terminal`, and `auto`. `auto` inspects the current folder and prints a matching React/Web Component/terminal integration snippet while still writing `ht-llm-marketplace.config.json`.
+
+Terminal-first marketplace:
+
+```powershell
+npx htlm status
+npx htlm search "qwen coder"
+npx htlm files Qwen/Qwen2.5-0.5B-Instruct-GGUF
+npx htlm pull qwen2.5:0.5b
+npx htlm downloads
+npx htlm inventory
+npx htlm verify <artifact-id>
+npx htlm load <artifact-id>
+npx htlm run <model> "hi"
+npx htlm rm <artifact-id>
+```
+
+Project fit:
+
+| Project type | Recommended surface |
+| --- | --- |
+| React, Vite, Next.js | `@ht-llm-marketplace/react` plus `htlm init --target react` |
+| Plain HTML, Astro, Rails, Django, Laravel, static sites | `<ht-model-marketplace>` plus `htlm init --target html` |
+| Node services, scripts, CLIs, agents, CI jobs | `@ht-llm-marketplace/sdk` or `htlm` terminal commands |
+| Desktop shells such as Tauri/Electron | Local daemon plus React or Web Component surface |
+
 Customization details live in [`docs/customization.md`](docs/customization.md). Open-source setup, privacy notes, contribution workflow, and package-release checks live in [`docs/open-source.md`](docs/open-source.md).
+Install profiles live in [`docs/integration-profiles.md`](docs/integration-profiles.md). Agent and local-LLM app integration lives in [`docs/agent-integration.md`](docs/agent-integration.md).
 Security and privacy boundaries live in [`docs/security-privacy.md`](docs/security-privacy.md). Release steps live in [`RELEASE.md`](RELEASE.md).
 
 ## Architecture

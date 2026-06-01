@@ -5,6 +5,7 @@ import {
   type CatalogItem,
   type DeletePlan,
   type DownloadJob,
+  type ArtifactVerification,
   type InventoryArtifact,
   type RuntimeStatus,
   type SystemScan
@@ -130,12 +131,12 @@ const getModelDescription = (item: CatalogItem) => {
   const authorName = item.author || "Open Source";
   
   if (isCoder) {
-    return `High-performance coding model curated by ${authorName}. Optimized for precision syntax parsing, code generation, and multi-language software engineering cascades.`;
+    return `Catalog result from ${authorName} with code-related naming or task metadata. Review the model card, license, and file-level fit before installing.`;
   }
   if (isInstruct) {
-    return `Instruction-aligned dialogue and general-purpose reasoning model by ${authorName}. Fine-tuned for precise instruction following, structured reasoning, and conversational chat threads.`;
+    return `Catalog result from ${authorName} with instruction/chat-related naming or task metadata. Local speed and quality depend on the selected quant and runtime.`;
   }
-  return `Community-tuned open-source GGUF weights for ${cleanName} by ${authorName}. Optimized for high-efficiency private local CPU/GPU execution.`;
+  return `Catalog result for ${cleanName} by ${authorName}. Use the source facts, license signal, and local evidence below before treating it as runnable.`;
 };
 
 const getParameterSize = (name: string) => {
@@ -191,6 +192,113 @@ function isMultipartFile(file: CatalogFile) {
   return Boolean(file.multipart && file.parts?.length);
 }
 
+type LicenseSignal = {
+  label: string;
+  tone: "good" | "warn" | "unknown";
+  detail: string;
+};
+
+function licenseSignal(license?: string): LicenseSignal {
+  if (!license) {
+    return {
+      label: "License unknown",
+      tone: "unknown",
+      detail: "No license tag was returned by the catalog source. Review the source model card before commercial or redistributed use."
+    };
+  }
+  const normalized = license.toLowerCase();
+  if (/(^|[-_ ])(mit|apache-2\.0|bsd|isc|mpl-2\.0)([-_ ]|$)/.test(normalized)) {
+    return {
+      label: license,
+      tone: "good",
+      detail: "Catalog license tag is generally permissive. Still review the model card for model-specific terms."
+    };
+  }
+  return {
+    label: license,
+    tone: "warn",
+    detail: "Catalog license tag may require review before redistribution, commercial use, or downstream packaging."
+  };
+}
+
+function findLocalArtifact(item: CatalogItem, inventory: InventoryArtifact[]) {
+  const itemName = item.name.toLowerCase();
+  const repo = item.repoId?.toLowerCase();
+  return inventory.find((artifact) => {
+    const artifactRepo = artifact.repoId?.toLowerCase();
+    const artifactName = artifact.name.toLowerCase();
+    const displayName = artifact.displayName?.toLowerCase();
+    return (repo && artifactRepo === repo) || artifactName === itemName || displayName === itemName;
+  });
+}
+
+function verificationTone(status?: InventoryArtifact["verificationStatus"]) {
+  if (status === "verified") return "good";
+  if (status === "failed") return "bad";
+  if (status === "source-unverifiable") return "unknown";
+  return "unknown";
+}
+
+function verificationLabel(status?: InventoryArtifact["verificationStatus"]) {
+  if (status === "verified") return "Verified locally";
+  if (status === "failed") return "Verification failed";
+  if (status === "source-unverifiable") return "Source unverifiable";
+  return "Not verified locally";
+}
+
+function sourceLabel(source: CatalogItem["source"]) {
+  if (source === "huggingface") return "Hugging Face";
+  if (source === "ollama") return "Ollama";
+  return "Local";
+}
+
+function sourceFactLine(item: CatalogItem) {
+  const parts = [sourceLabel(item.source)];
+  if (item.repoId) parts.push(item.repoId);
+  if (item.updatedAt) parts.push(`Updated ${new Date(item.updatedAt).toLocaleDateString()}`);
+  return parts.join(" / ");
+}
+
+function recommendationReasons(item: CatalogItem, scan: SystemScan | null, file?: CatalogFile) {
+  const reasons: string[] = [];
+  const license = licenseSignal(item.license);
+  if (item.fit.level === "excellent" || item.fit.level === "good") {
+    reasons.push(`${item.fit.label} from catalog size scoring`);
+  } else if (item.fit.level === "heavy") {
+    reasons.push("Heavy fit; review quantization before installing");
+  } else {
+    reasons.push("Exact fit needs file-level size data");
+  }
+  if (file?.sizeBytes) reasons.push(`${formatSize(file.sizeBytes)} recommended GGUF artifact`);
+  if (scan?.gpus?.[0]?.memoryTotalBytes) {
+    reasons.push(`${bytes(scan.gpus[0].memoryTotalBytes)} GPU detected`);
+  } else {
+    reasons.push("No GPU VRAM reading available; recommendation confidence is lower");
+  }
+  if (license.tone === "good") reasons.push("Permissive catalog license tag");
+  if (license.tone !== "good") reasons.push("License needs review");
+  return reasons;
+}
+
+function pickBestCatalogItem(items: CatalogItem[]) {
+  const fitRank: Record<string, number> = { excellent: 0, good: 1, unknown: 2, heavy: 3, unsupported: 4 };
+  const licenseRank: Record<LicenseSignal["tone"], number> = { good: 0, unknown: 1, warn: 2 };
+  return [...items].sort((a, b) => {
+    const fit = (fitRank[a.fit.level] ?? 5) - (fitRank[b.fit.level] ?? 5);
+    if (fit !== 0) return fit;
+    const license = licenseRank[licenseSignal(a.license).tone] - licenseRank[licenseSignal(b.license).tone];
+    if (license !== 0) return license;
+    return (b.downloads || 0) - (a.downloads || 0);
+  })[0];
+}
+
+function displayDownloadJobs(jobs: DownloadJob[]) {
+  const rank: Record<DownloadJob["status"], number> = { running: 0, queued: 1, paused: 2, failed: 3, completed: 4, cancelled: 5 };
+  return [...jobs]
+    .sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, 30);
+}
+
 // --- Quantization GGUF Selection Sub-component with dynamic GPU Offloading math ---
 interface QuantSelectorProps {
   files: CatalogFile[];
@@ -237,17 +345,17 @@ function QuantSelector({ files, installFile, scan, getParameterSize, selected, s
     const exceedsFree = sizeGB > freeVRAMGB;
 
     let status = "excellent";
-    let label = "Full GPU Offload Ready";
+    let label = "Likely GPU-fit";
 
     if (sizeGB > maxVRAMGB) {
       status = "heavy";
-      label = "Heavy / CPU-only Mode (VRAM Exceeded)";
+      label = "Likely needs CPU offload";
     } else if (sizeGB > freeVRAMGB) {
       status = "good";
-      label = "Partial GPU Offload (Split Memory)";
+      label = "May need split memory";
     } else if (sizeGB > maxVRAMGB * 0.75) {
       status = "good";
-      label = "High VRAM Footprint";
+      label = "High VRAM footprint";
     }
 
     return { sizeGB, pct, status, label, exceedsFree, maxVRAMGB, freeVRAMGB };
@@ -348,7 +456,7 @@ function QuantSelector({ files, installFile, scan, getParameterSize, selected, s
       {showSpecs && (
         <div className="ht-vram-visualizer">
           <div className="ht-vram-label-row">
-            <span>GPU Memory Allocation Scans</span>
+            <span>Estimated artifact memory fit</span>
             <strong>{vramData.sizeGB.toFixed(1)} GB / {vramData.maxVRAMGB.toFixed(1)} GB VRAM</strong>
           </div>
           <div className="ht-vram-bar-container">
@@ -358,7 +466,7 @@ function QuantSelector({ files, installFile, scan, getParameterSize, selected, s
             />
           </div>
           <div className="ht-vram-label-row" style={{ fontSize: '9px' }}>
-            <span>Compatibility Status: <strong className={`ht-quant-card-fit ${vramData.status === 'excellent' ? 'is-excellent' : vramData.status === 'good' ? 'is-good' : 'is-heavy'}`}>{vramData.label}</strong></span>
+            <span>Recommendation: <strong className={`ht-quant-card-fit ${vramData.status === 'excellent' ? 'is-excellent' : vramData.status === 'good' ? 'is-good' : 'is-heavy'}`}>{vramData.label}</strong></span>
           </div>
         </div>
       )}
@@ -392,17 +500,8 @@ function QuantSelector({ files, installFile, scan, getParameterSize, selected, s
       </div>
 
       {vramData.exceedsFree && (
-        <div style={{
-          background: 'rgba(239, 68, 68, 0.08)',
-          border: '1px solid rgba(239, 68, 68, 0.2)',
-          borderRadius: '8px',
-          padding: '10px 12px',
-          margin: '12px 0',
-          fontSize: '11px',
-          color: '#f87171',
-          lineHeight: '1.4'
-        }}>
-          <strong>⚠️ Pre-flight Compatibility Warning:</strong> This model quant ({vramData.sizeGB.toFixed(1)} GB) exceeds your available GPU VRAM ({vramData.freeVRAMGB.toFixed(1)} GB). Execution will automatically fall back to CPU memory channels, which will severely limit generation speed (tokens per second).
+        <div className="ht-quant-warning">
+          <strong>Compatibility warning:</strong> This file is about {vramData.sizeGB.toFixed(1)} GB, which is larger than the currently reported free GPU memory ({vramData.freeVRAMGB.toFixed(1)} GB). It may need CPU offload or a smaller quant.
         </div>
       )}
 
@@ -458,6 +557,9 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
   const [deletePlan, setDeletePlan] = useState<DeletePlan | null>(null);
   const [message, setMessage] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [verifyingArtifactId, setVerifyingArtifactId] = useState<string | null>(null);
+  const [verificationResult, setVerificationResult] = useState<ArtifactVerification | null>(null);
+  const [revealingArtifactId, setRevealingArtifactId] = useState<string | null>(null);
   const [filterFormat, setFilterFormat] = useState<string>("all");
   const [filterSpecialty, setFilterSpecialty] = useState<string>("all");
   const [filterSize, setFilterSize] = useState<string>("all");
@@ -566,7 +668,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     ]);
     setRuntimes(runtimeData.runtimes);
     setInventory(inventoryData.artifacts);
-    setDownloads(downloadData.jobs.filter((job) => job.status === "running" || job.status === "queued" || job.status === "paused"));
+    setDownloads(displayDownloadJobs(downloadData.jobs));
   }, [client]);
 
   const runSystemScan = useCallback(async (showBusy = true) => {
@@ -641,13 +743,15 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     return result;
   }, [catalog, filterFormat, filterSpecialty, filterSize, sortBy]);
 
+  const bestCatalogPick = useMemo(() => pickBestCatalogItem(processedCatalog), [processedCatalog]);
+
   const completedCountRef = useRef(0);
   useEffect(() => {
     void refresh().catch((error) => setMessage(error.message));
     const events = client.downloadEvents();
     events.onmessage = (event) => {
       const jobs = JSON.parse(event.data) as DownloadJob[];
-      setDownloads(jobs.filter((job) => job.status === "running" || job.status === "queued" || job.status === "paused"));
+      setDownloads(displayDownloadJobs(jobs));
       // Progress ticks arrive continuously during a download. Only do a full
       // inventory/runtime refresh when a job actually completes (the owned set
       // changed), never on every tick — otherwise this fans out into a request storm.
@@ -813,6 +917,61 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     await refresh();
   }
 
+  async function verifyArtifact(artifactId: string) {
+    setVerifyingArtifactId(artifactId);
+    setVerificationResult(null);
+    setMessage("");
+    try {
+      const result = await client.verifyArtifact(artifactId);
+      setVerificationResult(result.verification);
+      setMessage(result.verification.message || verificationLabel(result.verification.status));
+      await refresh();
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setVerifyingArtifactId(null);
+    }
+  }
+
+  async function loadArtifact(artifact: InventoryArtifact) {
+    setMessage("");
+    try {
+      if (artifact.runtime === "llamacpp") {
+        const result = await client.loadEngineModel({ artifactId: artifact.id });
+        setMessage(`Loaded ${result.loaded} with ${result.gpu || "CPU"} backend.`);
+        await refresh();
+        return;
+      }
+      await client.loadRuntime({ runtime: artifact.runtime, model: artifact.name });
+      setMessage(`Load requested for ${artifact.displayName || artifact.name}.`);
+      await refresh();
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
+
+  async function revealArtifact(artifact: InventoryArtifact) {
+    setRevealingArtifactId(artifact.id);
+    setMessage("");
+    try {
+      const result = await client.revealArtifact(artifact.id);
+      setMessage(result.message);
+    } catch (error) {
+      if (artifact.path) {
+        try {
+          await navigator.clipboard.writeText(artifact.path);
+          setMessage("Artifact path copied to clipboard.");
+        } catch {
+          setMessage((error as Error).message);
+        }
+      } else {
+        setMessage((error as Error).message);
+      }
+    } finally {
+      setRevealingArtifactId(null);
+    }
+  }
+
   async function pauseDownload(id: string) {
     try {
       await client.pauseDownload(id);
@@ -865,6 +1024,10 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     theme === "system" ? "ht-system" : ""
   ].filter(Boolean).join(" ");
   const rootStyle = tokensToStyle(marketplaceConfig.tokens);
+  const selectedLocalArtifact = selected ? findLocalArtifact(selected, inventory) : undefined;
+  const selectedLicense = selected ? licenseSignal(selected.license) : undefined;
+  const selectedRecommendedFile = files.length ? pickRecommendedQuant(files) : undefined;
+  const selectedRecommendationReasons = selected ? recommendationReasons(selected, scan, selectedRecommendedFile) : [];
 
   return (
     <div className={rootClassName} style={rootStyle}>
@@ -955,6 +1118,29 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                 </button>
               </form>
 
+              {bestCatalogPick ? (
+                <div className="ht-recommendation-panel">
+                  <div className="ht-recommendation-copy">
+                    <span>Best match for this machine</span>
+                    <strong>{bestCatalogPick.name}</strong>
+                    <small>{recommendationReasons(bestCatalogPick, scan).slice(0, 3).join(" / ")}</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="ht-download-secondary-btn"
+                    onClick={() => {
+                      if (bestCatalogPick.source === "huggingface") {
+                        void openFiles(bestCatalogPick);
+                      } else {
+                        setSelected(bestCatalogPick);
+                      }
+                    }}
+                  >
+                    Review
+                  </button>
+                </div>
+              ) : null}
+
               {/* Curation details bar */}
               <div className="ht-filter-bar">
                 <div className="ht-filter-group">
@@ -996,6 +1182,8 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                   const pSize = getParameterSize(item.name);
                   const specialties = getSpecialtyTags(item);
                   const isSelected = selected && selected.id === item.id;
+                  const license = licenseSignal(item.license);
+                  const localArtifact = findLocalArtifact(item, inventory);
                   
                   return (
                     <button
@@ -1015,17 +1203,19 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                         <div className="ht-item-title-row">
                           <strong className="ht-item-name">
                             {item.name}
-                            <span className="ht-verified-badge" title="Verified model repo">
-                              <svg style={{ width: '13px', height: '13px', verticalAlign: 'middle', marginLeft: '4px' }} viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                              </svg>
-                            </span>
                           </strong>
                           <span className="ht-item-author">by {item.author || "Community"}</span>
                         </div>
                       </div>
                       <div className="ht-item-badges">
+                        <span className="ht-meta-pill">{sourceLabel(item.source)}</span>
                         {showSpecs && <span className="ht-meta-pill ht-size-pill">{pSize}</span>}
+                        <span className={`ht-meta-pill ht-license-pill is-${license.tone}`}>{license.label}</span>
+                        {localArtifact ? (
+                          <span className={`ht-meta-pill ht-evidence-pill is-${verificationTone(localArtifact.verificationStatus)}`}>
+                            {verificationLabel(localArtifact.verificationStatus)}
+                          </span>
+                        ) : null}
                         {showBadges && specialties.map(spec => (
                           <span key={spec} className={`ht-meta-pill ht-spec-pill ht-spec-${spec.toLowerCase()}`}>
                             {spec}
@@ -1101,29 +1291,45 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                               <span>License: <strong>{selected.license}</strong></span>
                             </div>
                           ) : null}
+                          <div className="ht-detail-meta-item">
+                            <span>{verificationLabel(selectedLocalArtifact?.verificationStatus)}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
-                    {/* Pick Badge */}
-                    <div className="ht-staff-pick-badge">
-                      <span>Staff Pick</span>
-                      <svg style={{ width: '12px', height: '12px', marginLeft: '4px' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="7" y1="17" x2="17" y2="7" />
-                        <polyline points="7 7 17 7 17 17" />
-                      </svg>
+                    <div className={`ht-source-evidence-badge is-${verificationTone(selectedLocalArtifact?.verificationStatus)}`}>
+                      <span>{selectedLocalArtifact ? "Local evidence" : "Remote catalog"}</span>
                     </div>
                   </div>
 
-                  {/* Curated specialty & Capabilities badges */}
+                  <div className="ht-trust-panel">
+                    <div>
+                      <span>Source facts</span>
+                      <strong>{sourceFactLine(selected)}</strong>
+                      <small>{selected.url || "No source URL returned by catalog."}</small>
+                    </div>
+                    <div>
+                      <span>License signal</span>
+                      <strong className={`is-${selectedLicense?.tone || "unknown"}`}>{selectedLicense?.label}</strong>
+                      <small>{selectedLicense?.detail}</small>
+                    </div>
+                    <div>
+                      <span>Recommendation basis</span>
+                      <strong>{selectedRecommendedFile ? selectedRecommendedFile.path.split("/").pop() : selected.fit.label}</strong>
+                      <small>{selectedRecommendationReasons.join(" / ")}</small>
+                    </div>
+                  </div>
+
+                  {/* Source-derived tags */}
                   {showBadges && (
                     <div className="ht-capabilities-row">
-                      <span>Capabilities:</span>
+                      <span>Tags:</span>
                       <span className="ht-cap-pill is-reasoning">
-                        Reasoning
+                        {selected.task || "Catalog task unknown"}
                       </span>
                       {(selected.name.toLowerCase().includes("coder") || (selected.task || "").toLowerCase().includes("code")) && (
                         <span className="ht-cap-pill is-tools">
-                          Tool Use
+                          Coding
                         </span>
                       )}
                       {(selected.name.toLowerCase().includes("vision") || selected.name.toLowerCase().includes("vl")) && (
@@ -1150,11 +1356,11 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                       </div>
                       <div className="ht-spec-card">
                         <span className="ht-spec-card-label">Arch</span>
-                        <span className="ht-spec-card-val">{selected.name.toLowerCase().includes("qwen") ? "qwen2" : selected.name.toLowerCase().includes("gemma") ? "gemma2" : "llama3"}</span>
+                        <span className="ht-spec-card-val">{selected.tags.find((tag) => tag.startsWith("base_model:"))?.replace("base_model:", "") || "Unknown"}</span>
                       </div>
                       <div className="ht-spec-card">
                         <span className="ht-spec-card-label">Domain</span>
-                        <span className="ht-spec-card-val">llm</span>
+                        <span className="ht-spec-card-val">{selected.task || "Unknown"}</span>
                       </div>
                       <div className="ht-spec-card">
                         <span className="ht-spec-card-label">Format</span>
@@ -1179,7 +1385,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                             <svg style={{ width: '13px', height: '13px', marginRight: '4px' }} viewBox="0 0 24 24" fill="currentColor">
                               <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/>
                             </svg>
-                            <span>Full GPU Offload (Ollama Engine Managed)</span>
+                            <span>Runtime-managed Ollama pull</span>
                           </div>
                         )}
                         <button className="ht-download-primary-btn" onClick={() => void pullOllama(selected.name)}>
@@ -1218,19 +1424,19 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                       className={`ht-codex-tab-btn ${activeDetailTab === 'readme' ? 'is-active' : ''}`}
                       onClick={() => setActiveDetailTab('readme')}
                     >
-                      📑 README.md
+                      Model card
                     </button>
                     <button 
                       className={`ht-codex-tab-btn ${activeDetailTab === 'prompt' ? 'is-active' : ''}`}
                       onClick={() => setActiveDetailTab('prompt')}
                     >
-                      💬 Prompt Configuration
+                      Prompt notes
                     </button>
                     <button 
                       className={`ht-codex-tab-btn ${activeDetailTab === 'hardware' ? 'is-active' : ''}`}
                       onClick={() => setActiveDetailTab('hardware')}
                     >
-                      ⚙️ Hardware Audit
+                      Local fit
                     </button>
                   </div>
 
@@ -1252,16 +1458,16 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                             readme
                           ) : (
                             <>
-                              <h1>{selected.name} (GGUF quantization weights)</h1>
-                              <p>This repository contains highly-optimized, community-compiled GGUF quantization files of <strong>{selected.name}</strong>, designed specifically for low-resource local hardware execution. They support rapid inference configurations via both CPU offload matrices and direct GPU acceleration kernels.</p>
-                              <h3>💡 System Requirements & Hardware Context</h3>
+                              <h1>{selected.name}</h1>
+                              <p>No model card was returned for this repository. Use the source link, license signal, and downloadable file list on this screen before installing or redistributing this model.</p>
+                              <h3>Local fit signals</h3>
                               <ul>
-                                <li><strong>Recommended Threads</strong>: 6-12 CPU threads allocated in Settings.</li>
-                                <li><strong>Inference Backends</strong>: <code>llama.cpp</code> dynamic engines with Vulkan, CUDA, or Apple Metal scheduling.</li>
-                                <li><strong>Context Windows</strong>: Supports context limits up to 32,768 tokens (customizable inside Lumina playground).</li>
+                                <li><strong>Catalog source</strong>: {sourceFactLine(selected)}</li>
+                                <li><strong>Recommended file</strong>: {selectedRecommendedFile ? selectedRecommendedFile.path.split("/").pop() : "Select a GGUF file to see local fit."}</li>
+                                <li><strong>Fit basis</strong>: {selectedRecommendationReasons.join(" / ")}</li>
                               </ul>
-                              <h3>⚖ Licenses & Attributions</h3>
-                              <p>Weights are distributed strictly under the <code>{selected.license || "Apache-2.0"}</code> license framework. Please credit original author <strong>{selected.author || "Community"}</strong> when developing down-stream applications utilizing these checkpoints.</p>
+                              <h3>License and attribution</h3>
+                              <p>{selectedLicense?.detail} Review the upstream repository terms before commercial use or redistribution.</p>
                             </>
                           )}
                         </div>
@@ -1271,17 +1477,19 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                     {activeDetailTab === "prompt" && (
                       <>
                         <div className="ht-readme-title">
-                          💬 Prompt Templates & Context
+                          Prompt notes
                         </div>
                         <div className="ht-readme-container">
-                          <h3>🚀 Recommended Prompt Template Binding</h3>
+                          <h3>Template status</h3>
+                          <p>No repository-specific prompt template is available from the marketplace metadata. Start with the upstream model card guidance when present, then save a project-specific preset after testing.</p>
+                          <h3>Generic chat fallback</h3>
                           <pre><code>{`[SYSTEM]
 You are a helpful, precision-aligned local assistant.
 [USER]
 {prompt}
 [ASSISTANT]`}</code></pre>
-                          <h3>🧠 Context Length Settings</h3>
-                          <p>We recommend a standard context window of <strong>4,096 tokens</strong>. For long-context reasoning tasks, context configurations can be scaled up to <strong>32,768 tokens</strong> in settings.</p>
+                          <h3>Context setting</h3>
+                          <p>Choose context length from the runtime settings after a local load test. The marketplace does not infer a safe maximum unless the model card or runtime reports it.</p>
                         </div>
                       </>
                     )}
@@ -1289,13 +1497,15 @@ You are a helpful, precision-aligned local assistant.
                     {activeDetailTab === "hardware" && (
                       <>
                         <div className="ht-readme-title">
-                          ⚙️ Local System Scan details
+                          Local fit details
                         </div>
                         <div className="ht-readme-container">
-                          <h3>🖥️ GPU Diagnostics</h3>
-                          <p><strong>NVIDIA GeForce RTX 5070 Ti (16 GB VRAM)</strong> is fully capable of compiling execution streams with zero bottlenecking for models under 12B parameters.</p>
-                          <h3>⚡ CPU Performance Context</h3>
-                          <p>Active core allocation scans indicate that <strong>AMD Ryzen 9 9950X</strong> will manage partial offloading without active CPU latency spikes.</p>
+                          <h3>GPU diagnostics</h3>
+                          <p>{scan?.gpus?.length ? scan.gpus.map((gpu) => `${gpu.name}${gpu.memoryTotalBytes ? ` (${bytes(gpu.memoryTotalBytes)} VRAM)` : ""}`).join(", ") : "No GPU telemetry is available yet. Run Refresh Scan to update local fit."}</p>
+                          <h3>Memory and storage</h3>
+                          <p>{scan ? `${bytes(scan.os.freeMemoryBytes)} system memory free and ${scan.disk.freeBytes ? bytes(scan.disk.freeBytes) : "unknown"} disk space free at last scan.` : "System scan has not completed yet."}</p>
+                          <h3>Recommendation</h3>
+                          <p>{selectedRecommendedFile ? `${selectedRecommendedFile.path.split("/").pop()} is the current recommended file based on available size and fit metadata.` : "Open the file list to calculate a specific GGUF recommendation."}</p>
                         </div>
                       </>
                     )}
@@ -1327,7 +1537,7 @@ You are a helpful, precision-aligned local assistant.
                         className="ht-action-btn ht-primary-outline"
                         style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                       >
-                        ⏸️ Pause
+                        Pause
                       </button>
                     )}
                     {job.status === "paused" && (
@@ -1337,9 +1547,34 @@ You are a helpful, precision-aligned local assistant.
                         className="ht-action-btn"
                         style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', background: 'linear-gradient(135deg, var(--ht-cyan), var(--ht-blue))', border: 'none', color: 'white', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', borderRadius: '8px' }}
                       >
-                        ▶️ Resume
+                        Resume
                       </button>
                     )}
+                    {job.status === "completed" && job.artifactId ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const artifact = inventory.find((item) => item.id === job.artifactId);
+                            if (artifact) void loadArtifact(artifact);
+                            else setMessage("Refresh inventory to load this artifact.");
+                          }}
+                          className="ht-action-btn"
+                          style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', background: 'linear-gradient(135deg, var(--ht-cyan), var(--ht-blue))', border: 'none', color: 'white', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', borderRadius: '8px' }}
+                        >
+                          Run it
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void verifyArtifact(job.artifactId!)}
+                          className="ht-action-btn ht-primary-outline"
+                          style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          disabled={verifyingArtifactId === job.artifactId}
+                        >
+                          {verifyingArtifactId === job.artifactId ? "Verifying" : "Verify"}
+                        </button>
+                      </>
+                    ) : null}
                     {(job.status === "running" || job.status === "paused" || job.status === "queued") && (
                       <button 
                         type="button" 
@@ -1347,7 +1582,7 @@ You are a helpful, precision-aligned local assistant.
                         className="ht-action-btn ht-danger"
                         style={{ minHeight: '26px', padding: '0 10px', fontSize: '11px', color: 'white', border: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', borderRadius: '8px' }}
                       >
-                        ⏹️ Cancel
+                        Cancel
                       </button>
                     )}
                   </div>
@@ -1368,23 +1603,42 @@ You are a helpful, precision-aligned local assistant.
               <div className="ht-row ht-row--head">
                 <span>Name</span>
                 <span>Runtime</span>
-                <span>Ownership</span>
-                <span>Action</span>
+                <span>Evidence</span>
+                <span>Actions</span>
               </div>
               {inventory.map((artifact) => (
                 <div className="ht-row" key={artifact.id}>
                   <span>
                     <strong>{artifact.displayName || artifact.name}</strong>
-                    <small>{artifact.repoId || artifact.source}</small>
+                    <small>{artifact.repoId || artifact.source}{artifact.path ? ` / ${artifact.path}` : ""}</small>
                   </span>
                   <span>{artifact.runtime}</span>
-                  <span>{artifact.owned ? "Marketplace-owned" : "Provider-managed"}</span>
-                  <button disabled={!artifact.deleteEligible} onClick={() => void planDelete(artifact.id)}>
-                    Delete plan
-                  </button>
+                  <span>
+                    <strong>{artifact.owned ? "Marketplace-owned" : "Provider-managed"}</strong>
+                    <small>{verificationLabel(artifact.verificationStatus)}{artifact.actualBytes ? ` / ${bytes(artifact.actualBytes)}` : ""}</small>
+                  </span>
+                  <span className="ht-library-actions">
+                    <button type="button" disabled={!artifact.runnable} onClick={() => void loadArtifact(artifact)}>
+                      {artifact.loaded ? "Loaded" : "Run"}
+                    </button>
+                    <button type="button" onClick={() => void verifyArtifact(artifact.id)} disabled={verifyingArtifactId === artifact.id || !artifact.path}>
+                      {verifyingArtifactId === artifact.id ? "Verifying" : "Verify"}
+                    </button>
+                    <button type="button" onClick={() => void revealArtifact(artifact)} disabled={revealingArtifactId === artifact.id || !artifact.path}>
+                      {revealingArtifactId === artifact.id ? "Opening" : "Reveal"}
+                    </button>
+                    <button type="button" disabled={!artifact.deleteEligible} onClick={() => void planDelete(artifact.id)}>
+                      Delete plan
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
+            {verificationResult ? (
+              <p className={`ht-artifact-verification is-${verificationTone(verificationResult.status)}`}>
+                {verificationLabel(verificationResult.status)}: {verificationResult.message || "Local verification completed."}
+              </p>
+            ) : null}
           </section>
         )}
 

@@ -321,6 +321,8 @@ export interface QueueEntry {
   error?: string;
 }
 
+export type RuntimeResidencyMode = "balanced" | "fast-parallel" | "quality-single";
+
 export interface EngineRuntimeConfig {
   keepWarm: boolean;
   unloadAfterIdleMs: number;
@@ -329,6 +331,7 @@ export interface EngineRuntimeConfig {
   threads: number | "auto";
   draftModel: string | null;
   backend: "in-process" | "delegated-server";
+  residencyMode: RuntimeResidencyMode;
   delegatedServer: {
     enabled: boolean;
     port: number;
@@ -359,7 +362,41 @@ export interface HotPoolStatus {
   enabled: boolean;
   maxModels: number;
   maxModelBytes: number;
+  residencyMode: RuntimeResidencyMode;
+  residencyPlan?: EngineResidencyPlan;
   entries: HotPoolEntry[];
+}
+
+export interface RuntimeMemorySnapshot {
+  source: "system-scan" | "unavailable";
+  totalRamBytes: number;
+  freeRamBytes: number;
+  totalVramBytes: number;
+  freeVramBytes: number;
+  gpuCount: number;
+  scannedAt?: string;
+  notes: string[];
+}
+
+export interface EngineResidencyCandidate {
+  model: ModelIndexEntry;
+  estimatedRamBytes: number;
+  estimatedVramBytes: number;
+  eligible: boolean;
+  willFit: boolean;
+  action: "keep-hot" | "promote" | "demote" | "skip";
+  reason: string;
+}
+
+export interface EngineResidencyPlan {
+  mode: RuntimeResidencyMode;
+  maxModels: number;
+  maxModelBytes: number;
+  memory: RuntimeMemorySnapshot;
+  selected: EngineResidencyCandidate[];
+  skipped: EngineResidencyCandidate[];
+  demoted: EngineResidencyCandidate[];
+  generatedAt: string;
 }
 
 export interface LocalEmbeddingRequest {
@@ -473,6 +510,22 @@ export interface LlamaServerStatus {
   endpoint?: string;
   pid?: number;
   message: string;
+}
+
+export interface LlamaServerPoolEntry {
+  model: string;
+  path: string;
+  port: number;
+  endpoint?: string;
+  state: "starting" | "running" | "stopped" | "unavailable";
+  pid?: number;
+  message: string;
+}
+
+export interface LlamaServerPoolStatus {
+  enabled: boolean;
+  basePort: number;
+  entries: LlamaServerPoolEntry[];
 }
 
 export interface LlamaServerInstallStatus {
@@ -641,6 +694,10 @@ export class MarketplaceClient {
     return this.post<{ verification: ArtifactVerification }>(`/api/artifacts/${encodeURIComponent(id)}/verify`, {});
   }
 
+  revealArtifact(id: string) {
+    return this.post<{ ok: boolean; message: string }>(`/api/artifacts/${encodeURIComponent(id)}/reveal`, {});
+  }
+
   embeddings(request: LocalEmbeddingRequest) {
     return this.post<LocalEmbeddingResponse>("/v1/embeddings", request);
   }
@@ -681,12 +738,20 @@ export class MarketplaceClient {
     return this.get<LlamaServerStatus>("/api/engine/server/status");
   }
 
+  engineServerPoolStatus() {
+    return this.get<LlamaServerPoolStatus>("/api/engine/server/pool");
+  }
+
   installEngineServer(request: { flavor?: "auto" | "vulkan" | "cpu" | "cuda"; force?: boolean; release?: string } = {}) {
     return this.post<LlamaServerInstallStatus>("/api/engine/server/install", request);
   }
 
   hotPoolStatus() {
     return this.get<HotPoolStatus>("/api/engine/hot-pool");
+  }
+
+  engineResidency() {
+    return this.get<{ plan: EngineResidencyPlan; hotPool: HotPoolStatus }>("/api/engine/residency");
   }
 
   warmHotPool() {
@@ -699,6 +764,14 @@ export class MarketplaceClient {
 
   stopEngineServer() {
     return this.post<LlamaServerStatus>("/api/engine/server/stop", {});
+  }
+
+  warmEngineServerPool() {
+    return this.post<LlamaServerPoolStatus>("/api/engine/server/pool/warm", {});
+  }
+
+  stopEngineServerPool() {
+    return this.post<LlamaServerPoolStatus>("/api/engine/server/pool/stop", {});
   }
 
   /**

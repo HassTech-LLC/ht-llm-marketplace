@@ -659,6 +659,69 @@
   color: var(--ht-cyan);
 }
 
+.ht-license-pill.is-good,
+.ht-evidence-pill.is-good {
+  background: color-mix(in srgb, var(--ht-ok) 8%, transparent);
+  border-color: color-mix(in srgb, var(--ht-ok) 24%, transparent);
+  color: var(--ht-ok);
+}
+
+.ht-license-pill.is-warn,
+.ht-evidence-pill.is-warn {
+  background: color-mix(in srgb, var(--ht-gold) 9%, transparent);
+  border-color: color-mix(in srgb, var(--ht-gold) 26%, transparent);
+  color: var(--ht-gold);
+}
+
+.ht-license-pill.is-unknown,
+.ht-evidence-pill.is-unknown {
+  background: var(--ht-soft-bg-strong);
+  border-color: var(--ht-soft-border-strong);
+  color: var(--ht-muted);
+}
+
+.ht-evidence-pill.is-bad {
+  background: color-mix(in srgb, var(--ht-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--ht-danger) 24%, transparent);
+  color: var(--ht-danger);
+}
+
+.ht-recommendation-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--ht-line);
+  border-radius: 8px;
+  background: var(--ht-panel);
+  margin-bottom: 12px;
+}
+
+.ht-recommendation-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ht-recommendation-copy span,
+.ht-trust-panel span {
+  color: var(--ht-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.ht-recommendation-copy strong {
+  color: var(--ht-text);
+  font-size: 14px;
+}
+
+.ht-recommendation-copy small {
+  color: var(--ht-muted);
+  line-height: 1.4;
+}
+
 .ht-format-pill {
   background: rgba(139, 92, 246, 0.06);
   border-color: rgba(139, 92, 246, 0.15);
@@ -842,6 +905,38 @@
   color: var(--ht-muted);
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.ht-library-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ht-artifact-verification {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ht-soft-border);
+  color: var(--ht-muted);
+  background: var(--ht-panel);
+  font-size: 12px;
+}
+
+.ht-artifact-verification.is-good {
+  border-color: color-mix(in srgb, var(--ht-ok) 24%, transparent);
+  color: var(--ht-ok);
+}
+
+.ht-artifact-verification.is-bad {
+  border-color: color-mix(in srgb, var(--ht-danger) 24%, transparent);
+  color: var(--ht-danger);
+}
+
+.ht-artifact-verification.is-warn {
+  border-color: color-mix(in srgb, var(--ht-gold) 24%, transparent);
+  color: var(--ht-gold);
 }
 
 .ht-pill,
@@ -1279,6 +1374,77 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.ht-source-evidence-badge {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  border: 1px solid var(--ht-soft-border-strong);
+  color: var(--ht-muted);
+  background: var(--ht-soft-bg-strong);
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.ht-source-evidence-badge.is-good {
+  color: var(--ht-ok);
+  border-color: color-mix(in srgb, var(--ht-ok) 24%, transparent);
+  background: color-mix(in srgb, var(--ht-ok) 7%, transparent);
+}
+
+.ht-source-evidence-badge.is-warn {
+  color: var(--ht-gold);
+  border-color: color-mix(in srgb, var(--ht-gold) 26%, transparent);
+  background: color-mix(in srgb, var(--ht-gold) 8%, transparent);
+}
+
+.ht-source-evidence-badge.is-bad {
+  color: var(--ht-danger);
+  border-color: color-mix(in srgb, var(--ht-danger) 24%, transparent);
+  background: color-mix(in srgb, var(--ht-danger) 8%, transparent);
+}
+
+.ht-trust-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ht-trust-panel > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--ht-soft-border);
+  border-radius: 8px;
+  background: var(--ht-detail-card-bg);
+}
+
+.ht-trust-panel strong {
+  color: var(--ht-text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ht-trust-panel strong.is-good {
+  color: var(--ht-ok);
+}
+
+.ht-trust-panel strong.is-warn {
+  color: var(--ht-gold);
+}
+
+.ht-trust-panel strong.is-unknown {
+  color: var(--ht-muted);
+}
+
+.ht-trust-panel small {
+  color: var(--ht-muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .ht-detail-desc-card {
@@ -1885,7 +2051,9 @@
   .ht-filter-bar,
   .ht-filter-group,
   .ht-sort-group,
-  .ht-codex-tabs {
+  .ht-codex-tabs,
+  .ht-recommendation-panel,
+  .ht-trust-panel {
     display: grid;
     grid-template-columns: 1fr;
     width: 100%;

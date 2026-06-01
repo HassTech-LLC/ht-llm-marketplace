@@ -8,6 +8,7 @@ export function defaultRuntimeConfig(): EngineRuntimeConfig {
     gpuLayers: "auto",
     threads: "auto",
     backend: "in-process",
+    residencyMode: "balanced",
     draftModel: null,
     delegatedServer: {
       enabled: false,
@@ -43,6 +44,7 @@ export function sanitizeRuntimeConfig(
     gpuLayers: source.gpuLayers === "auto" ? "auto" : clampNumber(source.gpuLayers, 0, 999, "auto"),
     threads: source.threads === "auto" ? "auto" : clampNumber(source.threads, 1, 64, "auto"),
     backend: source.backend === "delegated-server" ? "delegated-server" : "in-process",
+    residencyMode: sanitizeResidencyMode(source.residencyMode),
     draftModel,
     delegatedServer: {
       enabled: Boolean(delegatedInput.enabled),
@@ -68,4 +70,8 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number 
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeResidencyMode(value: unknown) {
+  return value === "fast-parallel" || value === "quality-single" ? value : "balanced";
 }
