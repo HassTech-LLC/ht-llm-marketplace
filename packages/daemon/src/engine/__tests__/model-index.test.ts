@@ -14,7 +14,7 @@ describe("ModelIndex", () => {
   it("caches discovered GGUF models and includes the virtual specialist", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "htlm-index-"));
     tmpDirs.push(dir);
-    fs.writeFileSync(path.join(dir, "tiny.gguf"), "model");
+    fs.writeFileSync(path.join(dir, "tiny.gguf"), Buffer.from("GGUF model"));
     const index = new ModelIndex(() => [{ dir, source: "test" }], { ttlMs: 60_000 });
 
     const snapshot = await index.refresh("test");
