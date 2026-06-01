@@ -20,6 +20,7 @@ npm test
 npm run build
 npm run pack:dry-run
 npm run smoke:packages
+npm run smoke:universal
 ```
 
 Run the full release gate with:
@@ -105,7 +106,13 @@ For project setup:
 npx @ht-llm-marketplace/cli init --target auto
 ```
 
-Target options are `react`, `vite`, `next`, `html`, `terminal`, and `auto`. `auto` inspects the current folder and prints a matching React/Web Component/terminal integration snippet while still writing `ht-llm-marketplace.config.json`.
+Target options include `react`, `vite`, `next`, `html`, `python`, `django`, `rails`, `laravel`, `aspnet`, `electron`, `tauri`, `vscode`, `terminal`, and `auto`. `auto` inspects the current folder and prints a matching React/Web Component/API/terminal integration snippet while still writing `ht-llm-marketplace.config.json`.
+
+To see the supported project matrix:
+
+```powershell
+npx htlm targets
+```
 
 Terminal-first marketplace:
 
@@ -130,10 +137,19 @@ Project fit:
 | Plain HTML, Astro, Rails, Django, Laravel, static sites | `<ht-model-marketplace>` plus `htlm init --target html` |
 | Node services, scripts, CLIs, agents, CI jobs | `@ht-llm-marketplace/sdk` or `htlm` terminal commands |
 | Desktop shells such as Tauri/Electron | Local daemon plus React or Web Component surface |
+| Python, .NET, Ruby, PHP backends | OpenAI-compatible `http://127.0.0.1:3001/v1` plus optional Web Component |
+| VS Code and IDE extensions | OpenAI-compatible API plus `htlm` lifecycle commands |
 
+Universal integration details and sample project snippets live in [`docs/universal-integration.md`](docs/universal-integration.md).
 Customization details live in [`docs/customization.md`](docs/customization.md). Open-source setup, privacy notes, contribution workflow, and package-release checks live in [`docs/open-source.md`](docs/open-source.md).
 Install profiles live in [`docs/integration-profiles.md`](docs/integration-profiles.md). Agent and local-LLM app integration lives in [`docs/agent-integration.md`](docs/agent-integration.md).
 Security and privacy boundaries live in [`docs/security-privacy.md`](docs/security-privacy.md). Release steps live in [`RELEASE.md`](RELEASE.md).
+
+Before npm publication, build local install tarballs for a target project with:
+
+```powershell
+npm run bundle:local
+```
 
 ## Architecture
 
@@ -147,3 +163,4 @@ Security and privacy boundaries live in [`docs/security-privacy.md`](docs/securi
 - `examples/plain-html`: plain HTML Web Component embed.
 - `examples/minimal-widget`: smallest possible Web Component embed.
 - `examples/enterprise-white-label`: enterprise-style JSON customization preset.
+- `examples/universal`: Python, Django, Rails, Laravel, ASP.NET, Electron, Tauri, VS Code extension, and agent integration snippets.

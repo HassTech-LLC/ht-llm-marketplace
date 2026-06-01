@@ -82,6 +82,8 @@ npx htlm rm <artifact-id>
 
 This keeps the daemon, CLI, SDK, React component, and Web Component as equal product surfaces. A marketplace feature is not complete until it has a terminal/API path and an embeddable project path where practical.
 
+`htlm targets` prints the supported host matrix. `docs/universal-integration.md` and `examples/universal` cover Python, Django, Rails, Laravel, ASP.NET, Electron, Tauri, VS Code extensions, agents, and CI-style terminal use.
+
 For the full profile matrix, see [`integration-profiles.md`](integration-profiles.md). For Hermes-style agents, coding agents, local chat UIs, workflow runners, and other OpenAI-compatible clients, see [`agent-integration.md`](agent-integration.md).
 
 ## Hugging Face And Ollama Expectations
@@ -119,6 +121,17 @@ The release check verifies typecheck, tests, builds, dry-pack contents, and an e
 
 The external smoke installs packed tarballs into `artifacts/package-smoke`, imports SDK/React package APIs, runs the CLI help command, and starts the daemon bin on a free loopback port.
 `npm run smoke:cli-marketplace` additionally verifies terminal catalog search, file listing, download listing, artifact verification, artifact reveal, artifact load, and project-target initialization against a fake daemon.
+`npm run smoke:universal` verifies the universal target matrix, auto-detection for representative host projects, and the sample snippets under `examples/universal`.
+
+## Local Release Bundle
+
+Until the packages are published to npm, build a local install bundle for external projects:
+
+```powershell
+npm run bundle:local
+```
+
+The bundle is written outside the repo by default and contains packed tarballs, `manifest.json`, PowerShell and POSIX install scripts, and a README. This is the cleanest way to hand the marketplace to another local project without committing generated artifacts.
 
 ## Contribution Workflow
 

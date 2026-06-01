@@ -20,6 +20,7 @@ npx htlm profile runtime-only
 npx htlm profile embed-ui
 npx htlm profile studio-full
 npx htlm profile terminal-agent
+npx htlm targets
 ```
 
 Repo scripts for local development:
@@ -70,6 +71,8 @@ npx htlm init --target html
 ```
 
 This is the right profile for dashboards, internal tools, CRM/admin panels, local AI products, coding environments, desktop shells, and apps that want users to discover/install/verify/delete models without adopting the full Studio shell.
+
+For Django, Flask, FastAPI, Rails, Laravel, ASP.NET, Electron, Tauri, VS Code extensions, and other host types, use `npx htlm init --target auto` or see [`universal-integration.md`](universal-integration.md).
 
 ## Studio Full / Peak
 
@@ -126,3 +129,4 @@ A marketplace capability is complete only when the practical surfaces exist:
 - SDK path for project code.
 - Embed path for host apps when the feature is visual.
 - Smoke coverage for the surface that changed.
+- Example or target-matrix coverage when a new host project type is claimed.

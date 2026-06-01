@@ -19,6 +19,8 @@ try {
     await listDownloads(args);
   } else if (command === "profile" || command === "profiles") {
     printProfile(args[0]);
+  } else if (command === "targets" || command === "integrations") {
+    printIntegrationTargets();
   } else if (command === "doctor") {
     console.log(JSON.stringify(await getJson("/api/system/scan"), null, 2));
   } else if (command === "inventory") {
@@ -393,7 +395,38 @@ function positionalArgs(argv) {
 
 function normalizeTarget(target) {
   const normalized = String(target).toLowerCase();
-  if (["auto", "react", "vite", "next", "html", "web-component", "node", "terminal"].includes(normalized)) return normalized;
+  const aliases = {
+    webcomponent: "html",
+    "web-component": "html",
+    static: "html",
+    astro: "html",
+    svelte: "html",
+    vue: "html",
+    django: "python-web",
+    flask: "python-web",
+    fastapi: "python-web",
+    python: "python",
+    rails: "server-html",
+    ruby: "server-html",
+    laravel: "server-html",
+    php: "server-html",
+    aspnet: "server-html",
+    "asp.net": "server-html",
+    dotnet: "server-html",
+    ".net": "server-html",
+    electron: "desktop-web",
+    tauri: "desktop-web",
+    vscode: "extension",
+    "vs-code": "extension",
+    extension: "extension",
+    agent: "terminal",
+    agents: "terminal",
+    ci: "terminal",
+    backend: "terminal",
+    node: "terminal"
+  };
+  if (aliases[normalized]) return aliases[normalized];
+  if (["auto", "react", "vite", "next", "html", "python", "python-web", "server-html", "desktop-web", "extension", "terminal"].includes(normalized)) return normalized;
   return "auto";
 }
 
@@ -488,17 +521,108 @@ function marketplaceProfiles() {
 
 function detectProjectTarget(cwd) {
   const packagePath = path.join(cwd, "package.json");
-  if (!fs.existsSync(packagePath)) return "html";
-  try {
-    const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
-    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-    if (deps.next) return "next";
-    if (deps.react || deps["@vitejs/plugin-react"]) return deps.vite ? "vite" : "react";
-    if (pkg.scripts?.start || pkg.scripts?.dev) return "node";
-  } catch {
-    return "html";
+  if (fs.existsSync(packagePath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+      if (deps["@tauri-apps/api"] || deps["@tauri-apps/cli"]) return "desktop-web";
+      if (deps.electron) return "desktop-web";
+      if (deps.vscode || pkg.engines?.vscode || pkg.contributes) return "extension";
+      if (deps.next) return "next";
+      if (deps.react || deps["@vitejs/plugin-react"]) return deps.vite ? "vite" : "react";
+      if (pkg.scripts?.start || pkg.scripts?.dev) return "terminal";
+    } catch {
+      return "html";
+    }
   }
-  return "terminal";
+  if (fs.existsSync(path.join(cwd, "manage.py"))) return "python-web";
+  if (fs.existsSync(path.join(cwd, "pyproject.toml")) || fs.existsSync(path.join(cwd, "requirements.txt"))) return "python";
+  if (fs.existsSync(path.join(cwd, "Gemfile"))) return "server-html";
+  if (fs.existsSync(path.join(cwd, "composer.json"))) return "server-html";
+  if (fs.readdirSync(cwd).some((file) => file.endsWith(".csproj") || file.endsWith(".fsproj"))) return "server-html";
+  return "html";
+}
+
+function printIntegrationTargets() {
+  console.log("HT Local LLM Marketplace integration targets");
+  console.log("");
+  const rows = [
+    { project: "React / Vite / Next.js", target: "react|vite|next", surface: "React package", proof: "smoke:marketplace" },
+    { project: "Plain HTML / Astro / CMS", target: "html", surface: "Web Component", proof: "smoke:universal" },
+    { project: "Django / Flask / FastAPI", target: "python-web", surface: "OpenAI-compatible API plus Web Component", proof: "smoke:universal" },
+    { project: "Rails / Laravel / ASP.NET", target: "server-html", surface: "OpenAI-compatible API plus Web Component", proof: "smoke:universal" },
+    { project: "Electron / Tauri", target: "desktop-web", surface: "Local daemon plus React/Web Component", proof: "smoke:universal" },
+    { project: "VS Code / IDE extensions", target: "extension", surface: "OpenAI-compatible API plus CLI lifecycle", proof: "smoke:universal" },
+    { project: "Agents / CI / terminals", target: "terminal", surface: "CLI, SDK, /v1 API", proof: "smoke:cli-marketplace" }
+  ];
+  printRows(rows, ["project", "target", "surface", "proof"]);
+  console.log("");
+  console.log("Use htlm init --target auto inside a project, or pass any target above explicitly.");
+}
+
+function printOpenAiEnv() {
+  console.log("OpenAI-compatible endpoint:");
+  console.log("  OPENAI_BASE_URL=http://127.0.0.1:3001/v1");
+  console.log("  OPENAI_API_KEY=local-not-needed");
+  console.log("  Model list: htlm list or GET http://127.0.0.1:3001/v1/models");
+}
+
+function printPythonSnippet() {
+  printOpenAiEnv();
+  console.log("");
+  console.log("Python stdlib chat call:");
+  console.log("import json, os, urllib.request");
+  console.log('base = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:3001/v1")');
+  console.log('payload = {"model": "local", "messages": [{"role": "user", "content": "hi"}]}');
+  console.log('req = urllib.request.Request(f"{base}/chat/completions", data=json.dumps(payload).encode(), headers={"content-type": "application/json"})');
+  console.log("print(urllib.request.urlopen(req).read().decode())");
+}
+
+function printWebComponentSnippet(config) {
+  console.log("Web Component snippet:");
+  console.log(`<script type="module" src="${apiUrl}/widget/ht-model-marketplace.js"></script>`);
+  console.log(`<ht-model-marketplace api-url="${apiUrl}" theme="system" brand-name="${config.branding.name}" brand-tagline="${config.branding.tagline}" brand-mark="${config.branding.mark}" accent-color="${config.tokens["--ht-cyan"]}" default-query="${config.defaultQuery}"></ht-model-marketplace>`);
+}
+
+function printServerHtmlSnippet(config) {
+  printOpenAiEnv();
+  console.log("");
+  printWebComponentSnippet(config);
+  console.log("");
+  console.log("Server-rendered hosts can paste this into a page/template and keep all model lifecycle actions local to the daemon.");
+}
+
+function printDesktopSnippet(config) {
+  console.log("Desktop shell pattern:");
+  console.log("  1. Start the daemon when the app starts, or require users to run htlm start.");
+  console.log("  2. Render the React component in Electron/Tauri, or load the Web Component in a WebView.");
+  console.log("  3. Point model calls at http://127.0.0.1:3001/v1.");
+  console.log("");
+  printWebComponentSnippet(config);
+}
+
+function printExtensionSnippet() {
+  printOpenAiEnv();
+  console.log("");
+  console.log("Extension pattern:");
+  console.log("  - Use htlm status/search/downloads/verify/load for lifecycle commands.");
+  console.log("  - Use fetch('http://127.0.0.1:3001/v1/chat/completions') for model calls.");
+  console.log("  - Keep destructive actions behind explicit user confirmation.");
+}
+
+function printTerminalSnippet() {
+  console.log("Terminal/backend commands:");
+  console.log("  htlm start");
+  console.log("  htlm status");
+  console.log("  htlm search \"qwen coder\"");
+  console.log("  htlm pull qwen2.5:0.5b");
+  console.log("  htlm downloads");
+  console.log("  htlm inventory");
+  console.log("  htlm verify <artifact-id>");
+  console.log("  htlm load <artifact-id>");
+  console.log("  htlm run <model> \"hi\"");
+  console.log("");
+  printOpenAiEnv();
 }
 
 function printProjectSnippet(target, config) {
@@ -518,22 +642,27 @@ function printProjectSnippet(target, config) {
     }
     return;
   }
-  if (target === "node" || target === "terminal") {
-    console.log("Terminal/backend commands:");
-    console.log("  htlm start");
-    console.log("  htlm status");
-    console.log("  htlm search \"qwen coder\"");
-    console.log("  htlm pull qwen2.5:0.5b");
-    console.log("  htlm downloads");
-    console.log("  htlm inventory");
-    console.log("  htlm verify <artifact-id>");
-    console.log("  htlm load <artifact-id>");
-    console.log("  htlm run <model> \"hi\"");
+  if (target === "python") {
+    printPythonSnippet();
     return;
   }
-  console.log("Web Component snippet:");
-  console.log(`<script type="module" src="${apiUrl}/widget/ht-model-marketplace.js"></script>`);
-  console.log(`<ht-model-marketplace api-url="${apiUrl}" theme="system" brand-name="${config.branding.name}" brand-tagline="${config.branding.tagline}" brand-mark="${config.branding.mark}" accent-color="${config.tokens["--ht-cyan"]}" default-query="${config.defaultQuery}"></ht-model-marketplace>`);
+  if (target === "python-web" || target === "server-html") {
+    printServerHtmlSnippet(config);
+    return;
+  }
+  if (target === "desktop-web") {
+    printDesktopSnippet(config);
+    return;
+  }
+  if (target === "extension") {
+    printExtensionSnippet();
+    return;
+  }
+  if (target === "terminal") {
+    printTerminalSnippet();
+    return;
+  }
+  printWebComponentSnippet(config);
 }
 
 function printRows(rows, columns) {
@@ -581,10 +710,11 @@ function printHelp() {
   console.log("HT Local LLM Marketplace CLI");
   console.log("");
   console.log("Commands:");
-  console.log("  htlm init [--target auto|react|vite|next|html|terminal]");
+  console.log("  htlm init [--target auto|react|vite|next|html|python|django|rails|laravel|aspnet|electron|tauri|vscode|terminal]");
   console.log("                            Write config and print a project-specific embed or terminal snippet");
   console.log("  htlm serve|start          Start the local daemon");
   console.log("  htlm status               Summarize daemon, runtimes, inventory, and downloads");
+  console.log("  htlm targets              Print supported project integration targets");
   console.log("  htlm profile [name]       Show runtime-only, embed-ui, studio-full, terminal-agent, or dev profile");
   console.log("  htlm search <query>       Search marketplace catalogs from a terminal");
   console.log("  htlm files <hf-repo>      List downloadable files for a Hugging Face repo");

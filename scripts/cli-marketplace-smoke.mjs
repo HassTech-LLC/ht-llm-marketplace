@@ -130,6 +130,9 @@ try {
     throw new Error("init did not create ht-llm-marketplace.config.json");
   }
   await runCli(cli, ["init", "--target", "react"], { cwd: smokeRoot, expect: ["React/Vite/Next snippet", "ModelMarketplace"] });
+  await runCli(cli, ["init", "--target", "django"], { cwd: smokeRoot, expect: ["Project target: python-web", "Web Component snippet"] });
+  await runCli(cli, ["init", "--target", "electron"], { cwd: smokeRoot, expect: ["Project target: desktop-web", "Desktop shell pattern"] });
+  await runCli(cli, ["targets"], { expect: ["HT Local LLM Marketplace integration targets", "Django / Flask / FastAPI", "Agents / CI / terminals"] });
   await runCli(cli, ["profile"], { expect: ["runtime-only", "terminal-agent", "studio-full"] });
   await runCli(cli, ["profile", "runtime-only"], { expect: ["Runtime-only profile", "OpenAI base URL"] });
   await runCli(cli, ["profile", "terminal-agent"], { expect: ["Terminal and agent profile", "OPENAI_BASE_URL"] });
