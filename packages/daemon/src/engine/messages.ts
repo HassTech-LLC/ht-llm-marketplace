@@ -60,3 +60,22 @@ export function ollamaDone(model: string) {
     done_reason: "stop"
   };
 }
+
+export function ollamaGenerateChunk(model: string, response: string) {
+  return {
+    model,
+    created_at: new Date().toISOString(),
+    response,
+    done: false
+  };
+}
+
+export function ollamaGenerateDone(model: string, response = "") {
+  return {
+    model,
+    created_at: new Date().toISOString(),
+    response,
+    done: true,
+    done_reason: "stop"
+  };
+}

@@ -187,6 +187,25 @@ export class OllamaAdapter {
     return response;
   }
 
+  async generate(body: unknown, options?: { signal?: AbortSignal }) {
+    const response = await fetchWithTimeout(`${this.options.host}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      timeoutMs: 120_000,
+      signal: options?.signal
+    });
+    if (!response.ok) throw new Error(`Ollama generate failed with ${response.status}`);
+    return response;
+  }
+
+  async show(model: string) {
+    return this.fetchJson<unknown>("/api/show", {
+      method: "POST",
+      body: JSON.stringify({ model })
+    });
+  }
+
   private async fetchJson<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetchWithTimeout(`${this.options.host}${path}`, {
       ...init,

@@ -114,6 +114,50 @@ export function openAiFinalChunk(model: string, id: string, usage?: OpenAiUsage)
   return usage ? { ...base, usage } : base;
 }
 
+export function openAiTextCompletion(
+  model: string,
+  text: string,
+  id: string = `cmpl-${randomUUID().replace(/-/g, "")}`,
+  usage: OpenAiUsage = ZERO_USAGE
+) {
+  return {
+    id,
+    object: "text_completion" as const,
+    created: nowSeconds(),
+    model,
+    choices: [
+      {
+        text,
+        index: 0,
+        logprobs: null,
+        finish_reason: "stop" as const
+      }
+    ],
+    usage
+  };
+}
+
+export function openAiTextChunk(model: string, id: string, text: string) {
+  return {
+    id,
+    object: "text_completion" as const,
+    created: nowSeconds(),
+    model,
+    choices: [{ text, index: 0, logprobs: null, finish_reason: null }]
+  };
+}
+
+export function openAiTextFinalChunk(model: string, id: string, usage?: OpenAiUsage) {
+  const base = {
+    id,
+    object: "text_completion" as const,
+    created: nowSeconds(),
+    model,
+    choices: [{ text: "", index: 0, logprobs: null, finish_reason: "stop" as const }]
+  };
+  return usage ? { ...base, usage } : base;
+}
+
 export function openAiModelList(ids: string[]) {
   const unique = [...new Set(ids.filter(Boolean))];
   return {

@@ -103,7 +103,9 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       },
       ollama: {
         status: vi.fn().mockResolvedValue({ id: "ollama", online: false }),
-        chat: vi.fn()
+        chat: vi.fn(),
+        generate: vi.fn(),
+        show: vi.fn()
       },
       lmstudio: {
         status: vi.fn().mockResolvedValue({ id: "lmstudio", online: false })
@@ -127,6 +129,11 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
           return Promise.resolve({ loaded: this.loadedModel, gpu: "CUDA" });
         }),
         chat: vi.fn().mockResolvedValue("Mock response")
+      },
+      hotPool: {
+        status: vi.fn().mockReturnValue({ enabled: false, maxModels: 0, maxModelBytes: 0, entries: [] }),
+        has: vi.fn().mockReturnValue(false),
+        chat: vi.fn()
       },
       modelIndex: {
         models: vi.fn().mockResolvedValue([
@@ -258,6 +265,44 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     });
   });
 
+  it("POST /api/show returns local model metadata in Ollama shape", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/show", { model: "phi-3" });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.modelfile).toContain("Phi-3-mini-4k-instruct-q4.gguf");
+    expect(parsed.details.format).toBe("gguf");
+    expect(parsed.capabilities).toContain("completion");
+  });
+
+  it("GET /api/ps lists in-process loaded and hot models in Ollama shape", async () => {
+    const mockContext = createMockContext();
+    mockContext.engine.loadedModel = "phi-3";
+    mockContext.hotPool.status = vi.fn().mockReturnValue({
+      enabled: true,
+      maxModels: 2,
+      maxModelBytes: 3_000_000_000,
+      entries: [{ model: "tiny", path: "./models/tiny.gguf", source: "local", sizeBytes: 1000, state: "ready", gpu: "CUDA" }]
+    });
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/ps");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.models.map((model: any) => model.name)).toEqual(expect.arrayContaining(["phi-3", "tiny"]));
+    expect(parsed.models[0]).toHaveProperty("expires_at");
+  });
+
   it("GET /api/models/index returns cached model-index state", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);
@@ -385,6 +430,50 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(parsed.object).toBe("response");
     expect(parsed.output_text).toBe("hi");
     expect(mockContext.store.addResponse).toHaveBeenCalled();
+  });
+
+  it("POST /v1/completions supports legacy OpenAI-compatible text completions", async () => {
+    const mockContext = createMockContext();
+    mockContext.engine.loadedModel = "phi-3";
+    mockContext.engine.loadedPath = "./models/Phi-3-mini-4k-instruct-q4.gguf";
+    mockContext.engine.chat = vi.fn().mockResolvedValue("legacy text");
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/completions", { prompt: "hello", max_tokens: 4 });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.object).toBe("text_completion");
+    expect(parsed.choices[0].text).toBe("legacy text");
+    expect(mockContext.engine.chat).toHaveBeenCalledWith([{ role: "user", content: "hello" }], expect.objectContaining({ maxTokens: 4 }));
+  });
+
+  it("POST /api/generate supports Ollama-compatible prompt generation over the local engine", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/generate", {
+      model: "phi-3",
+      prompt: "Hello there",
+      stream: false,
+      options: { num_predict: 4, temperature: 0.2 }
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockContext.engine.load).toHaveBeenCalledWith(expect.objectContaining({ displayName: "phi-3" }));
+    expect(mockContext.engine.chat).toHaveBeenCalledWith(
+      [{ role: "user", content: "Hello there" }],
+      expect.objectContaining({ maxTokens: 4, temperature: 0.2 })
+    );
+    const parsed = JSON.parse(res.body);
+    expect(parsed.response).toBe("Mock response");
+    expect(parsed.done).toBe(true);
   });
 
   it("POST /api/chat auto-routes local GGUF model requests to in-process engine", async () => {
