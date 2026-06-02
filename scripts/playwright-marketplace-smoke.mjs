@@ -68,6 +68,10 @@ try {
     await page.getByRole("button", { name: "View Settings" }).click();
     await page.getByRole("button", { name: "Advanced", exact: true }).click();
     await page.getByRole("button", { name: "Close", exact: true }).click();
+    if (writeDocAssets) {
+      await page.waitForTimeout(250);
+      await captureDocAsset(page, "marketplace-advanced-matrix.png");
+    }
 
     const bodyText = await page.locator("body").innerText();
     const forbidden = [
