@@ -2,15 +2,27 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const forbiddenPaths = [
+  "PROJECT_MEMORY.md",
+  "apps/desktop/src-tauri/target",
+  "apps/desktop/src-tauri/gen",
   "artifacts/package-smoke",
   ".playwright-mcp",
   "output/playwright",
   "design-audit",
+  "docs/proofs/screenshots",
+  "docs/proofs/videos",
   ".remember",
   "studio-marketplace.jpg",
   "studio-proof.jpg",
   "net.txt",
   "console-errors.txt"
+];
+
+const forbiddenRootFilePatterns = [
+  /^daemon-.*\.log$/i,
+  /^daemon-.*\.err\.log$/i,
+  /^studio-.*\.log$/i,
+  /^studio-.*\.err\.log$/i
 ];
 
 const forbiddenLockEntries = [
@@ -31,6 +43,12 @@ const failures = [];
 
 for (const path of forbiddenPaths) {
   if (fs.existsSync(path)) failures.push(`Forbidden generated artifact remains: ${path}`);
+}
+
+for (const entry of fs.readdirSync(".")) {
+  if (forbiddenRootFilePatterns.some((pattern) => pattern.test(entry))) {
+    failures.push(`Forbidden root runtime log remains: ${entry}`);
+  }
 }
 
 if (fs.existsSync("package-lock.json")) {

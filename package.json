@@ -62,6 +62,7 @@
     "smoke:consumer:fast": "node scripts/consumer-clean-room-smoke.mjs --skip-build",
     "smoke:docs": "node scripts/docs-quality-smoke.mjs",
     "docs:assets": "node scripts/playwright-marketplace-smoke.mjs --docs-assets",
+    "docs:terminal": "node scripts/terminal-proof-assets.mjs",
     "peak:smoke": "node scripts/peak-smoke.mjs",
     "desktop:check": "npm --prefix apps/desktop run check",
     "desktop:build": "npm --prefix apps/desktop run build",

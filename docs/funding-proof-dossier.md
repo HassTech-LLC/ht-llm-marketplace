@@ -1,239 +1,78 @@
-# HassTech LLC: Local-First LLM Marketplace & Control Plane
-## Technical Demonstration & Funding Application Dossier
-*Date: June 2, 2026* | *Applicant: HASS TECH LLC* | *Focus: Edge AI and Local Model Supply Chains*
+# HT Local LLM Marketplace Funding Proof Dossier
 
----
+Date: 2026-06-02
+Applicant: HASS TECH LLC
+Focus: Local-first AI infrastructure, private model supply chains, and edge inference tooling
 
-## 1. Executive Summary & Market Differentiation
-### The Blocker in Modern AI
-Conventional artificial intelligence applications are throttled by heavy remote cloud dependency (OpenAI, Anthropic). This results in:
-1. **Critical Privacy Leaks**: Sensitive proprietary developer and investor data is routinely transmitted to external third-party servers.
-2. **Prohibitive Cloud Cost Saturation**: Constant API request costs choke small, pre-revenue start-ups (e.g. AWS/Azure host bills).
-3. **Connectivity Fragility**: Systems fail completely when offline or under volatile internet conditions.
+## Executive Snapshot
 
-### The HassTech Solution
-**HT Local LLM Marketplace** is a lightweight, zero-dependency, local-first control plane. It enables developers to package, manage, scan, score, embed, and execute local GGUF models directly on standard consumer workstations and edge devices. 
+HT Local LLM Marketplace is a lightweight local-first model marketplace and runtime control plane. It helps developers discover, install, verify, run, embed, and safely remove local model artifacts without sending private prompts or documents to a remote AI provider.
 
-By separating the **tiny control plane** (1.42 MiB TypeScript wrapper) from the **heavy model weights** (stored externally on user disks), HT Local LLM Marketplace turns consumer machines (such as 16GB VRAM GPUs) into self-contained, enterprise-grade inference nodes.
+The product boundary is intentionally small: this repo contains the control plane, CLI, SDK, React UI, Web Component, daemon, and Studio shell. Large model weights, runtime caches, desktop build output, and downloaded GGUF files remain user-machine payloads outside the publishable source footprint.
 
----
+## Proof Asset Map
 
-## 2. Technical Architecture & Topology
-The system uses a loopback daemon system that interfaces between standard client apps, local hardware telemetry, and resident model runtimes:
+| Use | Asset |
+| --- | --- |
+| GitHub README and product overview | [`assets/marketplace-desktop.png`](assets/marketplace-desktop.png) |
+| Mobile/responsive proof | [`assets/marketplace-mobile.png`](assets/marketplace-mobile.png) |
+| Advanced quantization proof | [`assets/marketplace-advanced-matrix.png`](assets/marketplace-advanced-matrix.png) |
+| Demo video for resume/funding submissions | [`assets/marketplace-demo.webm`](assets/marketplace-demo.webm) |
+| Terminal surface proof | [`assets/terminal-marketplace.svg`](assets/terminal-marketplace.svg) |
+| Terminal screenshot proof | [`assets/terminal-usability.png`](assets/terminal-usability.png) |
+| Terminal video proof | [`assets/terminal-demo.webm`](assets/terminal-demo.webm) |
+| Real CLI transcript | [`proofs/terminal-logs/cli-usability-transcript.txt`](proofs/terminal-logs/cli-usability-transcript.txt) |
+| System doctor evidence | [`proofs/terminal-logs/terminal-doctor-scan.json`](proofs/terminal-logs/terminal-doctor-scan.json) |
+| Verification summary example | [`proofs/terminal-logs/peak-preflight-log.txt`](proofs/terminal-logs/peak-preflight-log.txt) |
+| React integration snippet | [`proofs/code-snippets/embed-snippet-react.tsx`](proofs/code-snippets/embed-snippet-react.tsx) |
+| Vanilla Web Component snippet | [`proofs/code-snippets/embed-snippet-vanilla.html`](proofs/code-snippets/embed-snippet-vanilla.html) |
+| Local audit schema | [`proofs/code-snippets/sqlite-audit-schema.sql`](proofs/code-snippets/sqlite-audit-schema.sql) |
 
-```mermaid
-graph TD
-    A[React App / Web Component Widget] -->|CORS Loopback | B[Local Daemon loopback:3001]
-    C[CLI wrapper: htlm] -->|IPC / Local HTTP| B
-    B -->|Hardware Telemetry| D[SQLite Audit & Telemetry Store]
-    B -->|GPU VRAM Allocation Scan| E[Vulkan System Scan]
-    B -->|Runtime Pool Management| F[Resident llama-server Processes]
-    F -->|In-Process Generation| G[Local GPU VRAM / CPU RAM]
-```
+## Technical Merit
 
----
+- Local-first control plane: daemon, CLI, SDK, UI, and OpenAI-compatible `/v1` routes all target local loopback workflows.
+- Embeddable product surface: host apps can use the React package, Web Component, SDK, CLI, or OpenAI-compatible endpoint.
+- Safe lifecycle management: installed artifacts are tracked through local inventory, verification metadata, explicit privileged-action headers, and delete-plan evidence.
+- Hardware-aware UX: marketplace views surface model size, local fit, GPU memory implications, and advanced quantization choices before users download or run large files.
+- Small publishable footprint: package-size budgets and artifact-cleanliness gates keep generated build output, model payloads, and proof duplication out of the repo.
 
-## 3. Executable Scenarios & Terminal Proofs
+## Demo Script For Resume Or Funding Video
 
-### Scenario A: Zero-Config Hardware Scan & System Doctor
-The CLI queries the loopback daemon to scan local hardware, detecting available memory limits and Vulkan-compatible GPUs.
+1. Open the marketplace and show the desktop model discovery screen.
+2. Select a model and show size, license, source facts, and local-fit context.
+3. Open Advanced mode to show the quantization matrix and hardware fit warnings.
+4. Resize to the mobile viewport to show responsive behavior.
+5. Switch to terminal proof and show `htlm init --target terminal`, `htlm status`, and OpenAI-compatible endpoint setup.
+6. Close by explaining that the control plane stays small while model files remain local and user-owned.
 
-* **CLI Command**:
-  ```powershell
-  htlm doctor
-  ```
-* **Execution Output Log**:
-  ```json
-  {
-    "ok": true,
-    "scan": {
-      "os": {
-        "platform": "win32",
-        "arch": "x64",
-        "totalMemoryBytes": 34267234304,
-        "freeMemoryBytes": 18456209408
-      },
-      "disk": {
-        "freeBytes": 894562099200,
-        "totalBytes": 1024209305600
-      },
-      "gpus": [
-        {
-          "name": "NVIDIA GeForce RTX 5070 Ti",
-          "memoryTotalBytes": 17179869184,
-          "memoryFreeBytes": 16046495488,
-          "driverVersion": "555.85"
-        }
-      ]
-    }
-  }
-  ```
+## Funding Application Language
 
----
+### Small Business Digital Readiness
 
-### Scenario B: Dynamic Supply-Chain Search & Model Discovery
-Developers query the marketplace to find GGUF quantizations from Hugging Face Hub registries dynamically. The CLI calculates a parameter-based size estimation fallback in real-time.
+HT Local LLM Marketplace reduces dependency on remote AI subscriptions by letting small teams run compatible local models on hardware they already own. The system provides a clean developer path through CLI commands, embeddable UI components, and OpenAI-compatible endpoints, making private local AI adoption practical for small businesses without forcing a full platform rewrite.
 
-* **CLI Command**:
-  ```powershell
-  htlm search qwen3-coder
-  ```
-* **Execution Output Log**:
-  ```powershell
-  name                                              source       license     fit          repo                                            
-  ------------------------------------------------  -----------  ----------  -----------  ------------------------------------------------
-  Qwen3-Coder-Next-GGUF                             huggingface  apache-2.0  Pick a file  unsloth/Qwen3-Coder-Next-GGUF                   
-  Qwen3-Coder-30B-A3B-Instruct-GGUF                 huggingface  apache-2.0  Pick a file  unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF        
-  Qwen3-Coder-7B-Instruct-GGUF                      huggingface  apache-2.0  Pick a file  unsloth/Qwen3-Coder-7B-Instruct-GGUF        
-  ```
+### Defense And Tactical Edge
 
----
+The project is designed for local-first operation in constrained or disconnected environments. Its loopback daemon, explicit privileged-action controls, local inventory, and offline model execution path reduce exposure to remote network services while preserving a familiar OpenAI-compatible integration model for existing tools.
 
-### Scenario C: Clean-Room Target Initialization
-Developers can instantly initialize specific integration templates (`react`, `next`, `html`, `python`, `vscode`, etc.) from a single terminal command.
+### Technical Innovation And Research Merit
 
-* **CLI Command**:
-  ```powershell
-  htlm init --target react
-  ```
-* **Execution Output Log**:
-  ```powershell
-  [HassTech] Initializing React integration...
-  [HassTech] Created htlm.config.json
-  
-  React Code Snippet:
-  =========================================
-  import { ModelMarketplace } from "@ht-llm-marketplace/react";
-  import "@ht-llm-marketplace/react/dist/styles.css";
-  
-  export function App() {
-    return (
-      <div className="my-app">
-        <ModelMarketplace 
-          apiUrl="http://127.0.0.1:3001"
-          theme="dark"
-          compact={false}
-        />
-      </div>
-    );
-  }
-  =========================================
-  ```
+The main technical value is not a single model. It is the control layer around local model supply chains: model discovery, hardware-fit evaluation, artifact verification, runtime routing, portable embedding, terminal lifecycle commands, and safety-gated deletion. That layer helps developers compose local inference systems without hand-building every runtime and lifecycle control from scratch.
 
----
+### Commercial Growth
 
-### Scenario D: Local Performance Benchmarking & Diagnostic Telemetry
-Developers can run a short benchmark on any downloaded model to measure local hardware performance, prompt ingestion speeds, and token generation rates (tok/s) under absolute offline isolation.
+The marketplace can be packaged as a developer tool, embedded into client products, or used as the local AI control plane behind custom consulting work. The strongest commercial wedge is privacy-preserving AI enablement for regulated or cost-sensitive teams that want local execution while keeping a polished app surface.
 
-* **CLI Command**:
-  ```powershell
-  htlm bench unsloth/Qwen3-Coder-8B-Instruct-GGUF
-  ```
-* **Execution Output Log (TTFT & Generation Speed)**:
-  ```powershell
-  ======================================================================
-  HassTech LLM Marketplace - Hardware Performance Benchmark Run
-  ======================================================================
-  Target Model   : unsloth/Qwen3-Coder-8B-Instruct-GGUF (Q4_K_M)
-  Hardware Target: NVIDIA GeForce RTX 5070 Ti (16.0 GB VRAM)
-  Layers Loaded  : 32 / 32 (100.0% GPU Offload)
-  Model Load Time: 1.42 seconds
-  Context Speed  : 4210.53 tokens/second
-  Time-to-First  : 14 ms
-  Generation Spd : 52.03 tokens/second
-  ======================================================================
-  ```
-  *(The full telemetry log including detailed comparative metrics can be reviewed at [cli-run-benchmark.log](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/terminal-logs/cli-run-benchmark.log)).*
+## Verification Commands
 
----
-
-## 4. Visual Proof Assets
-
-The Playwright browser smoke test generates pixel-perfect visual-readiness logs. The following screenshots show the premium aesthetic design:
-
-### A. Desktop Marketplace Panel
-Shows the **Smart Pick** quant selector, precise model size indicators, pre-flight GPU VRAM safety warnings, and the glassmorphic tab-size badges inside the tabs (`Model card`, `Prompt notes`, `Local fit`):
-
-![Desktop Marketplace Layout](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/assets/marketplace-desktop.png)
-
-### B. Mobile Layout (Settings Drawer Open)
-Shows standard responsive scaling at a compact `390px` mobile width, highlighting the customizable options panel with zero horizontal layout overflow:
-
-![Mobile Settings Layout](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/assets/marketplace-mobile.png)
-
-### C. High-Fidelity E2E Video Walkthrough
-This video demonstrates full automated UI navigation, size calculations, Smart Pick parameter scanning, settings drawer, and mobile diagnostics:
-
-![Interactive Walkthrough Video](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/assets/marketplace-demo.webm)
-
-### D. Advanced Quantization Matrix View
-Shows the power-user **Advanced mode** screen. Displays a complete file selection matrix of GGUF quantifications (Q1_0, Q1_S, Q1_M, Q2_XXS, Q2_M, etc.), exact sizes, dynamic memory progress allocation bars, and glowing color-coded safety warnings (*"Recommendation: LIKELY NEEDS CPU OFFLOAD"*):
-
-![Advanced Quantization Matrix](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/assets/marketplace-advanced-matrix.png)
-
-### E. Local SQLite WAL Audit Schema
-HassTech secures and audits all offline model lifecycles, active runtimes, VRAM allocations, and benchmark evaluations inside a persistent local SQLite database using Write-Ahead Logging (WAL) concurrency to avoid lockups. The complete engineering schema is linked below:
-
-*(The full database schema script can be reviewed at [sqlite-audit-schema.sql](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/code-snippets/sqlite-audit-schema.sql)).*
-
----
-
-## 5. Funding Program Alignment & Application Snippets
-
-These tailored responses utilize the technical architecture of the **HT Local LLM Marketplace** to fulfill specific criteria for active funding applications.
-
-### 🌟 A. Verizon Small Business Digital Ready
-* **Application Prompt**: *How will this project increase your business's digital capabilities and scale your operations or customer reach?*
-* **Response Snippet**:
-  > "HassTech LLC's 'HT Local LLM Marketplace' addresses a major tech bottleneck: the high recurring cost and security vulnerabilities of remote AI services. By shifting advanced AI model search, diagnostics, and inference to local workstations, we expand our digital capabilities without incurring expensive cloud subscription fees. Our application enables local businesses, developers, and underserved entrepreneurs to utilize high-performing GGUF models (e.g., Llama-3, Qwen) completely offline. This local-first architecture eliminates recurring API costs, protects client privacy, and makes digital adoption highly scalable. The funding will allow us to roll out our zero-latency offline control panel to local small businesses, letting them deploy custom AI chatbots, semantic search tools, and privacy-first document summarizers on existing hardware, thereby reducing operational overhead by up to 90%."
-
----
-
-### 🛡️ B. AFWERX SBIR/STTR (Department of Defense)
-* **Application Prompt**: *Describe the military utility, commercial viability, and security advantages of your technical innovation at the tactical edge.*
-* **Response Snippet**:
-  > "Modern tactical military operations require secure, high-speed artificial intelligence at the edge, frequently in Denied, Intermittent, and Limited (DIL) communication environments. Cloud-dependent AI architectures are highly vulnerable to network jamming, electronic sniffing, and data leaks. HassTech LLC's 'HT Local LLM Marketplace' is a lightweight control plane that enables local-first, offline execution of quantized GGUF models directly on edge workstations and ruggedized hardware. 
-  > 
-  > Featuring a 5-Ring Security Architecture—including local DNS rebinding protection (isLoopbackHost), custom header OPTIONS blocks, path traversal verification, and LFS SHA256 integrity checks—the system operates under a zero-trust posture. Furthermore, our native AVX-512 LLVM bypass compiles llama.cpp binaries optimized for standard CPU/GPU hardware, ensuring maximal hardware acceleration. This gives tactical operators instant access to secure, offline mission-planning assistants, language translation, and local telemetry diagnostics, without ever transmitting signal intelligence over the air. Its high commercial viability is proven through frictionless developer integrations across VS Code, React, and Web Components."
-
----
-
-### 🔬 C. NSF America's Seed Fund (National Science Foundation)
-* **Application Prompt**: *Describe the technical innovation, research challenges, and broader impacts of the proposed technology.*
-* **Response Snippet**:
-  > **Intellectual Merit & Technical Innovation:**
-  > "The primary innovation lies in our multi-surface local model residency scheduling and zero-copy dynamic fallback architecture. When a quantized GGUF model uses an architecture unsupported by a node's primary engine, our system automatically registers the model with secondary runtimes (Ollama/LM Studio) via dynamic, on-the-fly Modelfiles, proxying subsequent completions transparently to prevent execution failures. Additionally, we resolve the research challenge of AVX-512 compiler crashes in LLVM Clang toolchains by targeting optimized x86-64-v3 instructions, capturing hardware acceleration (AVX2, FMA, BMI1/2) without compiler errors.
-  > 
-  > **Broader Impacts:**
-  > Our technology democratizes AI access by removing expensive hardware entry barriers. By building a high-efficiency controller that accurately calculates real-time VRAM allocation and maps quantized files (e.g. Q4_K_M vs Q8_0) to existing system resources, we enable standard consumer computers to run advanced reasoning models. This shifts the AI supply chain from central cloud monopolies to localized, privacy-focused compute nodes, fostering open-source research and protecting data privacy across education, healthcare, and software engineering."
-
----
-
-### 📈 D. NASE Growth Grants (National Association for the Self-Employed)
-* **Application Prompt**: *How will this grant be used to foster immediate business growth and increase your competitiveness in the marketplace?*
-* **Response Snippet**:
-  > "HassTech LLC will use the NASE Growth Grant to accelerate the launch of our commercial offline AI consulting services. The grant will directly fund the final packaging and licensing of our embeddable 'HT Model Marketplace' React and Web Component suites. Because these widgets allow enterprise customers to host, customize, and telemetry-monitor their own local AI model directories under their own brand, we gain a strong competitive advantage over standard AI agencies that rely on raw API wrappers. By offering an absolute 'zero cloud data leak' solution, we can target highly regulated clients in medical, financial, and legal sectors. This grant will fund target developer SDK distribution, enabling us to acquire our first 50 enterprise contract licenses and scale our monthly recurring revenue."
-
----
-
-## 6. Automated Verification Status
-To assure investors of code quality and regression safety, the repository compiles and checks itself automatically:
+Use fresh command output before making public release claims:
 
 ```powershell
-$ npm run release:preflight
-
-> ht-llm-marketplace@0.1.0 release:preflight
-> node scripts/release-preflight.mjs
-
-- Running tscheck... OK
-- Running vitest unit suites... OK (171/171 tests passed)
-- Running build workspace workspaces... OK
-- Running api compatibility checks... OK
-- Running docs quality check... OK
-- Running cli marketplace check... OK
-- Running universal integration smoke... OK
-- Running playwright browser smoke... OK
-- Running npm publish dry-run... OK
-
-RELEASE STATUS: 100% GREEN - READY FOR PRODUCTION PUBLISHING
+npm run docs:assets
+npm run docs:terminal
+npm run smoke:docs
+npm run check:artifacts
+npm run release:check
 ```
+
+Do not claim benchmark numbers, cost reduction percentages, or production readiness unless the matching evidence has been regenerated for the current machine and current commit.

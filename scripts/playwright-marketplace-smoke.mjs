@@ -63,7 +63,11 @@ try {
     await page.getByText("Template status").waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Local fit" }).click();
     await page.getByText("GPU diagnostics").waitFor({ timeout: 10_000 });
-    if (writeDocAssets) await captureDocAsset(page, "marketplace-desktop.png");
+    if (writeDocAssets) {
+      await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: "instant" }));
+      await page.waitForTimeout(100);
+      await captureDocAsset(page, "marketplace-desktop.png");
+    }
 
     await page.getByRole("button", { name: "View Settings" }).click();
     await page.getByRole("button", { name: "Advanced", exact: true }).click();
@@ -97,6 +101,10 @@ try {
     if ((await page.getByText("One-Click Install").count()) > 0) {
       throw new Error("Runtime page still exposes the old one-click install copy.");
     }
+
+    await page.getByRole("button", { name: "Discover" }).click();
+    await page.getByRole("heading", { name: "Discover" }).waitFor({ timeout: 10_000 });
+    await page.locator(".ht-catalog-item-compact").first().waitFor({ timeout: 10_000 });
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     if (overflow) throw new Error("Marketplace desktop layout has horizontal overflow.");

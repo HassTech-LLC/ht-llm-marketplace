@@ -1,30 +1,29 @@
-# Security and Privacy Architecture (The 5-Ring Defense)
+# Security and Privacy Architecture
 
-This document provides a highly detailed, professional, general-purpose explanation of the platform's security controls. It can be used for repository README files, funding applications, developer documentations, or technical resumes.
+This narrative summarizes the local safety controls for README material, funding applications, client proposals, and resume artifacts.
 
----
+## Local-First Boundary
 
-## 🔒 The 5 Defensive Security Rings
+The marketplace is designed around a loopback daemon and local runtime state. Host apps talk to local endpoints, while private prompts, model files, runtime inventory, and hardware scans stay on the user's machine.
 
-Since local daemons run system processes, scan hardware, and perform deletions, they are sensitive attack targets. The daemon implements a rigorous, multi-dimensional defense model:
+## Defensive Controls
 
-### Ring 1: DNS Rebinding Protection (`isLoopbackHost`)
-- **Mechanism**: The daemon inspects the HTTP `Host` header of every incoming request. If it does not match local loopback networks (`127.0.0.1`, `localhost`, `::1`), the request is immediately rejected with `403 Forbidden`.
-- **Value**: Stops external malicious web pages from hijacking the active local connection in the user's browser.
+### 1. Loopback Host Enforcement
 
-### Ring 2: Origin CSRF Restrictions
-- **Mechanism**: All state-changing endpoints (`POST`, `PUT`, `DELETE`) inspect browser-provided `Origin` headers. Requests are only processed if they match origins specified in `allowedOrigins` (e.g., trusted local app ports, specific domains).
-- **Value**: Prevents Cross-Site Request Forgery attacks from unverified sites.
+The daemon rejects requests that do not target local loopback hosts such as `127.0.0.1`, `localhost`, or `::1`. This reduces exposure to DNS rebinding attacks against a local service.
 
-### Ring 3: Privileged Action Confirmation (Dual Headers)
-- **Mechanism**: Sensitive, high-risk actions (e.g. system installations, self-updates, deleting files, VRAM evictions, revealing local directories) require a custom header:
-  `x-ht-marketplace-confirm: privileged-action` or `x-ht-studio-confirm: privileged-action`.
-- **Value**: Because custom headers force a **CORS Preflight (OPTIONS request)** in web browsers, cross-origin web pages are blocked by browser sandboxes from exploiting the daemon's local access.
+### 2. Origin Restrictions
 
-### Ring 4: Path Traversal Defenses in Delete Safety Plans
-- **Mechanism**: File deletions must be strictly contained inside the configured marketplace directories. Path resolutions use `path.relative` and `isPathInside` assertions to verify that all targets are inside registered workspace boundaries.
-- **Value**: Deletions targeted at parent or system drives (`../../`) are blocked.
+State-changing browser requests are checked against configured allowed origins. This protects privileged local actions from untrusted web pages.
 
-### Ring 5: Binary Execution & Download Integrity Verification
-- **Mechanism**: The daemon verifies downloaded binaries and installer files against trusted patterns. Hugging Face downloads are validated against Hugging Face LFS SHA256 hashes immediately after completion.
-- **Value**: Ensures complete download integrity and prevents remote code execution vulnerabilities from corrupted or compromised files.
+### 3. Privileged-Action Headers
+
+Sensitive actions require explicit confirmation headers such as `x-ht-marketplace-confirm: privileged-action`. Browser clients must pass CORS preflight checks before issuing those actions.
+
+### 4. Delete-Plan Containment
+
+Delete operations are limited to marketplace-owned artifact paths. Path traversal checks prevent cleanup routines from escaping into parent directories or system locations.
+
+### 5. Download And Artifact Verification
+
+Download flows validate expected file metadata where available and keep artifact verification state in local inventory. This makes the model lifecycle auditable without sending local state to a cloud service.

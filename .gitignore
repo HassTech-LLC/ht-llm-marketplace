@@ -16,6 +16,8 @@ npm-debug.log*
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+/PROJECT_MEMORY.md
+/ht-llm-marketplace.config.json
 packages/daemon/data/
 packages/daemon/models/
 packages/daemon/downloads/

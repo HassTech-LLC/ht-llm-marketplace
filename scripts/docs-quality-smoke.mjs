@@ -7,8 +7,12 @@ const requiredFiles = [
   "docs/index.md",
   "docs/assets/marketplace-desktop.png",
   "docs/assets/marketplace-mobile.png",
+  "docs/assets/marketplace-demo.webm",
+  "docs/assets/terminal-usability.png",
+  "docs/assets/terminal-demo.webm",
   "docs/assets/terminal-marketplace.svg",
   "docs/assets/embed-surfaces.svg",
+  "docs/proofs/terminal-logs/cli-usability-transcript.txt",
   "docs/universal-integration.md",
   "docs/integration-profiles.md",
   "docs/agent-integration.md",
@@ -52,8 +56,12 @@ for (const relative of requiredFiles) {
 }
 assertPngDimensions("docs/assets/marketplace-desktop.png", 1000, 700);
 assertPngDimensions("docs/assets/marketplace-mobile.png", 360, 700);
+assertPngDimensions("docs/assets/terminal-usability.png", 1000, 700);
+assertNonEmpty("docs/assets/marketplace-demo.webm", 50_000);
+assertNonEmpty("docs/assets/terminal-demo.webm", 20_000);
 assertIncludes("docs/assets/terminal-marketplace.svg", read("docs/assets/terminal-marketplace.svg"), "<svg");
 assertIncludes("docs/assets/embed-surfaces.svg", read("docs/assets/embed-surfaces.svg"), "<svg");
+assertIncludes("docs/proofs/terminal-logs/cli-usability-transcript.txt", read("docs/proofs/terminal-logs/cli-usability-transcript.txt"), "node packages/cli/src/index.js status");
 
 const readme = read("README.md");
 for (const marker of readmeMarkers) assertIncludes("README.md", readme, marker);
@@ -62,7 +70,7 @@ const docsIndex = read("docs/index.md");
 for (const marker of docsIndexMarkers) assertIncludes("docs/index.md", docsIndex, marker);
 
 const pkg = JSON.parse(read("package.json"));
-for (const script of ["smoke:docs", "smoke:universal", "smoke:cli-marketplace", "release:check", "bundle:local", "docs:assets"]) {
+for (const script of ["smoke:docs", "smoke:universal", "smoke:cli-marketplace", "release:check", "bundle:local", "docs:assets", "docs:terminal"]) {
   if (!pkg.scripts?.[script]) throw new Error(`package.json missing script ${script}`);
 }
 if (!pkg.scripts["release:check"].includes("smoke:docs")) {
@@ -103,6 +111,12 @@ function assertPngDimensions(relative, minWidth, minHeight) {
   if (width < minWidth || height < minHeight) {
     throw new Error(`${relative} is too small: ${width}x${height}`);
   }
+}
+
+function assertNonEmpty(relative, minBytes) {
+  const absolute = path.join(root, relative);
+  const size = fs.statSync(absolute).size;
+  if (size < minBytes) throw new Error(`${relative} is too small: ${size} bytes`);
 }
 
 function walk(dir) {

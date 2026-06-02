@@ -21,7 +21,7 @@ The most important distinction is size versus payload:
 | Local-first model supply chain | Daemon, inventory, downloads, runtime scan, delete plans. |
 | Embeddable anywhere | React component, Web Component, SDK, CLI `init --target`, universal examples. |
 | Terminal and agent ready | `htlm` CLI, `/v1` OpenAI-compatible endpoint, agent integration guide. |
-| Small control plane | Tracked source around 1.42 MiB; package tarballs from about 8.9 KB to 128.6 KB. |
+| Small control plane | Keep the tracked repo in the low single-digit MiB range including proof media; enforce npm tarball budgets with `npm run check:artifacts`. |
 | Safe lifecycle management | Manifest-owned delete plans, explicit privileged-action headers, local inventory and audit state. |
 | Runtime-flexible | Managed HT Studio engine plus optional Ollama, LM Studio, llama.cpp, and OpenAI-compatible endpoints. |
 

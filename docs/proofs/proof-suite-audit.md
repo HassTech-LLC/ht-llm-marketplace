@@ -1,50 +1,62 @@
-# HassTech LLM Marketplace: Verification Proof Suite Audit
-*Date: June 2, 2026* | *Auditor: Antigravity*
+# HT Local LLM Marketplace Proof Suite Audit
 
-This audit evaluates the generated E2E demonstration video, screenshots, code snippets, and terminal logs inside the [`docs/proofs/`](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/) directory. 
+Date: 2026-06-02
 
-We assess whether the current assets show the **HT Local LLM Marketplace's full worth** for repositories, resumes, and funding applications, highlighting gaps and presenting structured enhancements.
+This audit describes the proof assets that support repository presentation, resume material, demos, and funding applications.
 
----
+## Current Proof Layout
 
-## 🎯 1. High-Value Accomplishments (What the Suite Shows Well)
+Visual proof assets are canonical under [`../assets`](../assets):
 
-The current proofs display several premium features with flawless execution:
+- [`../assets/marketplace-desktop.png`](../assets/marketplace-desktop.png)
+- [`../assets/marketplace-mobile.png`](../assets/marketplace-mobile.png)
+- [`../assets/marketplace-advanced-matrix.png`](../assets/marketplace-advanced-matrix.png)
+- [`../assets/marketplace-demo.webm`](../assets/marketplace-demo.webm)
+- [`../assets/terminal-marketplace.svg`](../assets/terminal-marketplace.svg)
+- [`../assets/terminal-usability.png`](../assets/terminal-usability.png)
+- [`../assets/terminal-demo.webm`](../assets/terminal-demo.webm)
+- [`../assets/embed-surfaces.svg`](../assets/embed-surfaces.svg)
 
-*   **Persistent Size Indicators (UI worth)**: The screenshots and video beautifully capture the dynamic size telemetry. The catalog metadata pills (`8B • ~4.8 GB`) and the tab buttons (`Model card [17.6 GB]`, `Local fit [17.6 GB]`) illustrate how sizing is kept visible at all times.
-*   **Safety telemetries (Investor worth)**: The amber/red pre-flight warnings (*"This quant exceeds available GPU VRAM. Expect CPU offload"* and *"No confirmed GPU-fit artifact found"*) prove that HassTech has built-in safety boundaries. This is highly compelling for edge deployments.
-*   **Responsive Multi-Device Scaling (Engineering worth)**: The mobile viewport capture (`screenshots/marketplace-mobile.png`) illustrates that the Runtimes drawer scales down to `390px` with zero horizontal overflow, demonstrating premium CSS execution.
-*   **Developer Simplicity (Resume worth)**: The drop-in code snippets (`embed-snippet-react.tsx` and `embed-snippet-vanilla.html`) show that third-party developers can embed this entire model picker cockpit using just **3 lines of code**.
+Supplemental proof material stays under this folder:
 
----
+- [`terminal-logs/cli-usability-transcript.txt`](terminal-logs/cli-usability-transcript.txt)
+- [`terminal-logs/terminal-doctor-scan.json`](terminal-logs/terminal-doctor-scan.json)
+- [`terminal-logs/peak-preflight-log.txt`](terminal-logs/peak-preflight-log.txt)
+- [`code-snippets/embed-snippet-react.tsx`](code-snippets/embed-snippet-react.tsx)
+- [`code-snippets/embed-snippet-vanilla.html`](code-snippets/embed-snippet-vanilla.html)
+- [`code-snippets/sqlite-audit-schema.sql`](code-snippets/sqlite-audit-schema.sql)
+- [`text-narratives/security-and-privacy.md`](text-narratives/security-and-privacy.md)
+- [`text-narratives/technical-innovation-and-merit.md`](text-narratives/technical-innovation-and-merit.md)
+- [`text-narratives/business-value-and-democratization.md`](text-narratives/business-value-and-democratization.md)
 
-## ⚠️ 2. Identified Gaps (What is Missing to Show its "Full Worth")
+## Bloat Decision
 
-While the current assets are outstanding, they leave out several **power-user systems capabilities** that represent the platform's ultimate technical differentiation:
+Do not duplicate screenshots or videos under `docs/proofs`. Binary media lives once in `docs/assets` so the README, docs index, funding dossier, and proof audit all reference the same current captures.
 
-### Gap A: The Advanced Quantization Matrix
-*   **The Feature**: The Advanced mode quant selector displaying a complete list of GGUF quantizations (Q4_K_M, Q8_0, Q5_K_S, etc.), paired with exact file sizes and color-coded GPU allocation badges (`Full GPU Offload`, `Partial Offload`, `CPU Only`).
-*   **The Issue**: Our current desktop screenshot shows the "Smart Pick" Simple Mode. The button `"Review Advanced Options"` is visible but the actual **Advanced Options matrix list** is not displayed. Prospective developers and funding evaluators cannot see this crucial technical breakdown.
+The release artifact gate rejects regenerated `docs/proofs/screenshots`, `docs/proofs/videos`, root runtime logs, Tauri `target`, Tauri `gen`, and root `PROJECT_MEMORY.md` files.
 
-### Gap B: The Terminal Playground & CLI telemetry
-*   **The Feature**: The offline command-line companion (`htlm`) running local diagnostics, checking model indexes, and serving prompt completions with live token-per-second (`tok/s`) generation telemetry.
-*   **The Issue**: We have JSON outputs inside the written dossier, but we do **not** have a visual screenshot or mock terminal frame of the CLI running. Visual assets (such as styled terminal logs or high-quality terminal-dashboard captures) capture human attention much faster than raw code files.
+## Usability Coverage
 
-### Gap C: SQLite WAL Audit Telemetry
-*   **The Feature**: SQLite database logging which audits every model installation, health check, and system doctor run under Write-Ahead Logging (WAL) concurrency.
-*   **The Issue**: The current proof suite lists SQL specifications, but does not provide a copy-pasteable database schema snippet showing how HassTech logs hardware audits for local compliance.
+The current visual and terminal set demonstrates:
 
----
+- Desktop marketplace discovery and detail review.
+- Mobile responsive behavior at a 390px viewport.
+- Advanced quantization matrix review.
+- A recorded browser walkthrough in WebM format.
+- Terminal integration targets, agent profile setup, and CLI initialization flow.
+- React, vanilla HTML, and SQLite audit snippets for reuse in proposals.
 
-## ⚡ 3. Targeted Enhancements to Show Full Worth
+## Remaining Rule
 
-To close these gaps and make your repository and funding dossier absolutely bulletproof, we will generate three new general-purpose assets inside [`docs/proofs/`](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/):
+Before using these assets publicly, regenerate the visual set with:
 
-### 1. [`screenshots/marketplace-advanced-matrix.png`](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/screenshots/marketplace-advanced-matrix.png) [NEW]
-*   **Capture Strategy**: We will run a targeted Playwright script that navigates to the dashboard, clicks on a catalog model, clicks the `"Review Advanced Options"` button, and captures a high-resolution screenshot of the **Advanced Quantization Selection Matrix** showing the physical sizes and GPU compatibility badges.
+```powershell
+npm run docs:assets
+npm run smoke:docs
+```
 
-### 2. [`code-snippets/sqlite-audit-schema.sql`](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/code-snippets/sqlite-audit-schema.sql) [NEW]
-*   **Capture Strategy**: Write a clean, general-purpose SQL schema file showing the SQLite databases structure that HassTech uses to audit model lifecycle history, system doctor runs, and VRAM telemetry logs.
+For a full release-quality claim, run:
 
-### 3. [`terminal-logs/cli-run-benchmark.log`](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/terminal-logs/cli-run-benchmark.log) [NEW]
-*   **Capture Strategy**: Generate an authentic, high-fidelity log of running `htlm bench qwen3-coder` showing precise local hardware performance, model load times, token evaluation metrics, and local generation statistics (tok/s) to prove the raw speed of your offline runtime engine.
+```powershell
+npm run release:check
+```

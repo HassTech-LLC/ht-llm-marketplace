@@ -236,9 +236,25 @@ Marketplace mobile:
 
 ![Marketplace mobile screenshot](docs/assets/marketplace-mobile.png)
 
+Video walkthrough:
+
+[`docs/assets/marketplace-demo.webm`](docs/assets/marketplace-demo.webm)
+
+Terminal video:
+
+[`docs/assets/terminal-demo.webm`](docs/assets/terminal-demo.webm)
+
 Terminal marketplace:
 
 ![Terminal marketplace flow](docs/assets/terminal-marketplace.svg)
+
+Terminal screenshot:
+
+![Terminal proof screenshot](docs/assets/terminal-usability.png)
+
+Terminal transcript:
+
+[`docs/proofs/terminal-logs/cli-usability-transcript.txt`](docs/proofs/terminal-logs/cli-usability-transcript.txt)
 
 Embeddable surfaces:
 

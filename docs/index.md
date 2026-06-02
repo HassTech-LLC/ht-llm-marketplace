@@ -21,7 +21,11 @@ HT Local LLM Marketplace is a local-first model marketplace, runtime control pla
 | --- | --- |
 | Marketplace desktop | [`assets/marketplace-desktop.png`](assets/marketplace-desktop.png) |
 | Marketplace mobile | [`assets/marketplace-mobile.png`](assets/marketplace-mobile.png) |
+| Marketplace video | [`assets/marketplace-demo.webm`](assets/marketplace-demo.webm) |
 | Terminal marketplace | [`assets/terminal-marketplace.svg`](assets/terminal-marketplace.svg) |
+| Terminal screenshot | [`assets/terminal-usability.png`](assets/terminal-usability.png) |
+| Terminal video | [`assets/terminal-demo.webm`](assets/terminal-demo.webm) |
+| Terminal transcript | [`proofs/terminal-logs/cli-usability-transcript.txt`](proofs/terminal-logs/cli-usability-transcript.txt) |
 | Embeddable surfaces | [`assets/embed-surfaces.svg`](assets/embed-surfaces.svg) |
 
 ## Product Surfaces
