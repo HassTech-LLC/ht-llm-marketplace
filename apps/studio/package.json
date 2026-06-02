@@ -12,12 +12,12 @@
   "dependencies": {
     "@ht-llm-marketplace/react": "file:../../packages/react",
     "@ht-llm-marketplace/sdk": "file:../../packages/sdk",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.12"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
   }
 }
