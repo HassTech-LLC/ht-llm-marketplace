@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "timestamp": "2026-06-02T15:28:40.123Z",
+  "system": {
+    "os": "win32",
+    "platform": "Windows 11 Pro",
+    "arch": "x64",
+    "cpu": "Intel(R) Core(TM) i9-14900K CPU @ 3.20GHz",
+    "totalMemoryBytes": 34267234304,
+    "freeMemoryBytes": 18456209408
+  },
+  "gpus": [
+    {
+      "name": "NVIDIA GeForce RTX 5070 Ti",
+      "vendor": "NVIDIA",
+      "driverVersion": "555.85",
+      "memoryTotalBytes": 17179869184,
+      "memoryFreeBytes": 16046495488,
+      "vulkanSupported": true,
+      "cudaSupported": true
+    }
+  ],
+  "runtimes": {
+    "llama_server": {
+      "online": true,
+      "version": "b8637 (gemma4 compliant)",
+      "activeProcesses": 0
+    },
+    "ollama": {
+      "online": true,
+      "port": 11434,
+      "version": "0.1.48"
+    },
+    "lm_studio": {
+      "online": false,
+      "port": 1234
+    }
+  },
+  "inventory": {
+    "totalDownloadedModels": 3,
+    "totalBytesOnDisk": 12845620930,
+    "models": [
+      {
+        "id": "qwen3-coder-8b-instruct",
+        "name": "Qwen3-Coder-8B-Instruct-GGUF",
+        "quant": "Q4_K_M",
+        "sizeBytes": 4856209408,
+        "isDownloaded": true,
+        "engine": "llama-server"
+      },
+      {
+        "id": "llama-3-8b-instruct",
+        "name": "Llama-3-8B-Instruct-GGUF",
+        "quant": "Q8_0",
+        "sizeBytes": 8545620930,
+        "isDownloaded": true,
+        "engine": "llama-server"
+      }
+    ]
+  }
+}

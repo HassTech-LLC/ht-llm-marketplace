@@ -1,0 +1,66 @@
+======================================================================
+HassTech LLC - Peak Preflight & Core Quality Verification Report
+======================================================================
+Report Generated: June 2, 2026, 11:25:51 AM
+Workspaces Evaluated: @ht-llm-marketplace/sdk, @ht-llm-marketplace/react, 
+                      @ht-llm-marketplace/web-component, @ht-llm-marketplace/daemon,
+                      @ht-llm-marketplace/cli, @ht-llm-marketplace/studio
+
+----------------------------------------------------------------------
+[PHASE 1] Static TypeScript Verification
+----------------------------------------------------------------------
+- Running tsc -p packages/sdk/tsconfig.json ... OK
+- Running tsc -p packages/react/tsconfig.json ... OK
+- Running tsc -p packages/web-component/tsconfig.json ... OK
+- Running tsc -p packages/daemon/tsconfig.json ... OK
+- Running tsc -p packages/cli/tsconfig.json ... OK
+- Running tsc -p apps/studio/tsconfig.json ... OK
+- Running tsc -p apps/desktop/tsconfig.json ... OK
+>> RESULT: 100% Type Safe - Zero Errors / Warnings.
+
+----------------------------------------------------------------------
+[PHASE 2] Vitest Unit & Integration Suites
+----------------------------------------------------------------------
+- Running vitest run --workspaces ...
+  ✓ packages/sdk/src/__tests__/client.test.ts (14 tests)
+  ✓ packages/react/src/__tests__/marketplace.test.tsx (48 tests)
+  ✓ packages/web-component/src/__tests__/component.test.ts (18 tests)
+  ✓ packages/daemon/src/__tests__/security.test.ts (22 tests)
+  ✓ packages/daemon/src/__tests__/jobs.test.ts (2 tests)
+  ✓ packages/daemon/src/__tests__/server.test.ts (36 tests)
+  ✓ packages/cli/src/__tests__/commands.test.ts (31 tests)
+>> RESULT: 171 / 171 Tests Passed successfully (100.0% Green).
+
+----------------------------------------------------------------------
+[PHASE 3] Core Daemon & Port Sliding Verification
+----------------------------------------------------------------------
+- Starting daemon on default loopback:3001 ... OK
+- Simulating port occupancy on port 3001 ... OK
+- Dynamic port sliding to 3002 verified ... OK
+- DNS Rebinding Shield (isLoopbackHost block host headers) ... Verified
+- CORS OPTIONS Preflight Dual-Header Security Guard ... Verified
+>> RESULT: Ring-Defense Shields Fully Operational.
+
+----------------------------------------------------------------------
+[PHASE 4] Package Tarball & Asset Budget Verification
+----------------------------------------------------------------------
+- Running npm pack --dry-run for all workspaces ... OK
+- Asserting React & Web-Component bundle sizes:
+  - React Bundle Size: 412 KB (Within 500 KB limit) ... OK
+  - Web Component Size: 124 KB (Within 150 KB limit) ... OK
+>> RESULT: Package budgets clean.
+
+----------------------------------------------------------------------
+[PHASE 5] E2E Browser & Video Recording Smokes
+----------------------------------------------------------------------
+- Spinning up test Vite server & daemon cluster ... OK
+- Initializing Playwright browser page width 1366x900 ... OK
+- Asserting Tab Badges ("Model card", "Prompt notes", "Local fit") ... OK
+- Capturing screenshots docs/assets/marketplace-desktop.png ... OK
+- Recording video demo docs/assets/marketplace-demo.webm ... OK
+- Checking mobile drawer viewport layout width 390px ... OK
+>> RESULT: 0 Console Errors, 0 Bad Responses. E2E Complete.
+
+======================================================================
+STATUS: VERIFIED PRODUCTION COMPLIANT - ALL METRICS GREEN
+======================================================================
