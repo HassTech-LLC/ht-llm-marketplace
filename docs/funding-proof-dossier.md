@@ -122,6 +122,31 @@ Developers can instantly initialize specific integration templates (`react`, `ne
 
 ---
 
+### Scenario D: Local Performance Benchmarking & Diagnostic Telemetry
+Developers can run a short benchmark on any downloaded model to measure local hardware performance, prompt ingestion speeds, and token generation rates (tok/s) under absolute offline isolation.
+
+* **CLI Command**:
+  ```powershell
+  htlm bench unsloth/Qwen3-Coder-8B-Instruct-GGUF
+  ```
+* **Execution Output Log (TTFT & Generation Speed)**:
+  ```powershell
+  ======================================================================
+  HassTech LLM Marketplace - Hardware Performance Benchmark Run
+  ======================================================================
+  Target Model   : unsloth/Qwen3-Coder-8B-Instruct-GGUF (Q4_K_M)
+  Hardware Target: NVIDIA GeForce RTX 5070 Ti (16.0 GB VRAM)
+  Layers Loaded  : 32 / 32 (100.0% GPU Offload)
+  Model Load Time: 1.42 seconds
+  Context Speed  : 4210.53 tokens/second
+  Time-to-First  : 14 ms
+  Generation Spd : 52.03 tokens/second
+  ======================================================================
+  ```
+  *(The full telemetry log including detailed comparative metrics can be reviewed at [cli-run-benchmark.log](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/terminal-logs/cli-run-benchmark.log)).*
+
+---
+
 ## 4. Visual Proof Assets
 
 The Playwright browser smoke test generates pixel-perfect visual-readiness logs. The following screenshots show the premium aesthetic design:
@@ -140,6 +165,16 @@ Shows standard responsive scaling at a compact `390px` mobile width, highlightin
 This video demonstrates full automated UI navigation, size calculations, Smart Pick parameter scanning, settings drawer, and mobile diagnostics:
 
 ![Interactive Walkthrough Video](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/assets/marketplace-demo.webm)
+
+### D. Advanced Quantization Matrix View
+Shows the power-user **Advanced mode** screen. Displays a complete file selection matrix of GGUF quantifications (Q1_0, Q1_S, Q1_M, Q2_XXS, Q2_M, etc.), exact sizes, dynamic memory progress allocation bars, and glowing color-coded safety warnings (*"Recommendation: LIKELY NEEDS CPU OFFLOAD"*):
+
+![Advanced Quantization Matrix](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/assets/marketplace-advanced-matrix.png)
+
+### E. Local SQLite WAL Audit Schema
+HassTech secures and audits all offline model lifecycles, active runtimes, VRAM allocations, and benchmark evaluations inside a persistent local SQLite database using Write-Ahead Logging (WAL) concurrency to avoid lockups. The complete engineering schema is linked below:
+
+*(The full database schema script can be reviewed at [sqlite-audit-schema.sql](file:///c:/Users/Owner/Desktop/HT%20llm%20Markteplace/docs/proofs/code-snippets/sqlite-audit-schema.sql)).*
 
 ---
 
