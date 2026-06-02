@@ -19,8 +19,18 @@ try {
   await waitFor(studioUrl, false);
 
   const browser = await chromium.launch();
+  let context;
+  let page;
   try {
-    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const contextOptions = { viewport: { width: 1366, height: 900 } };
+    if (writeDocAssets) {
+      contextOptions.recordVideo = {
+        dir: path.resolve("docs", "assets"),
+        size: { width: 1366, height: 900 }
+      };
+    }
+    context = await browser.newContext(contextOptions);
+    page = await context.newPage();
     const consoleErrors = [];
     const failedRequests = [];
     const badResponses = [];
@@ -103,7 +113,20 @@ try {
       );
     }
   } finally {
+    if (context) await context.close();
     await browser.close();
+    if (writeDocAssets) {
+      const video = page.video();
+      if (video) {
+        const videoPath = await video.path();
+        const destPath = path.resolve("docs", "assets", "marketplace-demo.webm");
+        if (fs.existsSync(destPath)) {
+          fs.unlinkSync(destPath);
+        }
+        fs.renameSync(videoPath, destPath);
+        console.log(`Video demo successfully recorded and saved to: ${destPath}`);
+      }
+    }
   }
   console.log("marketplace smoke ok");
 } finally {
