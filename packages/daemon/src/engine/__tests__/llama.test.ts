@@ -18,6 +18,7 @@ function makeFakeModule(options: FakeOptions = {}) {
 
   class FakeChatSession {
     systemPrompt?: string;
+    private history: any[] = [];
     constructor(opts: { contextSequence: unknown; systemPrompt?: string }) {
       this.systemPrompt = opts.systemPrompt;
       events.sessionsCreated += 1;
@@ -26,6 +27,12 @@ function makeFakeModule(options: FakeOptions = {}) {
       events.promptOptions.push({ maxTokens: opts?.maxTokens });
       for (const word of reply.split(" ")) opts?.onTextChunk?.(`${word} `);
       return reply;
+    }
+    getChatHistory() {
+      return this.history;
+    }
+    setChatHistory(history: any[]) {
+      this.history = history;
     }
   }
 
