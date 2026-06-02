@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createWriteStream } from "node:fs";
 
@@ -213,8 +214,10 @@ export async function installManagedLlamaServer(
     };
   }
 
-  const assetDir = path.join(root, release.tag_name, asset.name.replace(/\.(zip|tar\.gz)$/i, ""));
-  const archivePath = path.join(root, `${release.tag_name}-${asset.name}`);
+  const releaseSegment = safeManagedPathSegment(release.tag_name, "release");
+  const assetSegment = safeManagedPathSegment(asset.name, "asset");
+  const assetDir = path.join(root, releaseSegment, assetSegment.replace(/\.(zip|tar\.gz)$/i, ""));
+  const archivePath = path.join(root, `${releaseSegment}-${assetSegment}`);
   fs.rmSync(assetDir, { recursive: true, force: true });
   fs.mkdirSync(assetDir, { recursive: true });
   await downloadFile(asset.browser_download_url, archivePath);
@@ -304,7 +307,13 @@ function binaryFromManifest(root: string) {
     const manifestPath = path.join(root, "manifest.json");
     if (!fs.existsSync(manifestPath)) return undefined;
     const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { binaryPath?: unknown };
-    if (typeof parsed.binaryPath === "string" && fs.existsSync(parsed.binaryPath)) return parsed.binaryPath;
+    if (
+      typeof parsed.binaryPath === "string" &&
+      fs.existsSync(parsed.binaryPath) &&
+      isPathInside(root, parsed.binaryPath)
+    ) {
+      return parsed.binaryPath;
+    }
   } catch {
     return undefined;
   }
@@ -350,6 +359,9 @@ async function fetchLlamaRelease(tag?: string): Promise<GithubRelease> {
 }
 
 async function downloadFile(url: string, target: string) {
+  if (!isTrustedLlamaReleaseUrl(url)) {
+    throw new Error("Refusing llama-server download from an untrusted release URL.");
+  }
   const response = await fetch(url, {
     headers: {
       "user-agent": "ht-llm-marketplace"
@@ -358,7 +370,57 @@ async function downloadFile(url: string, target: string) {
   if (!response.ok || !response.body) throw new Error(`Unable to download llama-server archive (${response.status}).`);
   const size = Number(response.headers.get("content-length") || "0");
   if (size > DOWNLOAD_LIMIT_BYTES) throw new Error("llama-server archive is larger than the managed installer limit.");
-  await pipeline(response.body as unknown as NodeJS.ReadableStream, createWriteStream(target));
+  try {
+    await pipeline(response.body as unknown as NodeJS.ReadableStream, byteLimitTransform(DOWNLOAD_LIMIT_BYTES), createWriteStream(target));
+  } catch (error) {
+    fs.rmSync(target, { force: true });
+    throw error;
+  }
+}
+
+export function safeManagedPathSegment(value: string, fallback = "item") {
+  const cleaned = value
+    .replace(/[\\/]+/g, "__")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^\.+$/g, "")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 180);
+  return /[a-zA-Z0-9]/.test(cleaned) ? cleaned : fallback;
+}
+
+export function isTrustedLlamaReleaseUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      (parsed.hostname === "github.com" ||
+        parsed.hostname === "objects.githubusercontent.com" ||
+        parsed.hostname === "release-assets.githubusercontent.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function byteLimitTransform(maxBytes: number) {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes) {
+        callback(new Error(`Download exceeded the managed installer limit of ${maxBytes} bytes.`));
+        return;
+      }
+      callback(null, chunk);
+    }
+  });
+}
+
+function isPathInside(root: string, candidate: string) {
+  const resolvedRoot = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+  const resolvedCandidate = fs.existsSync(candidate) ? fs.realpathSync(candidate) : path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function extractArchive(archivePath: string, targetDir: string) {

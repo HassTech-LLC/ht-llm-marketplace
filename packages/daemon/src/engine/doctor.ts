@@ -88,6 +88,31 @@ function locateNodeModulesDir(): string | undefined {
   return undefined;
 }
 
+function findHighestLocalBuild(nodeModulesDir: string): string | undefined {
+  const localBuildsDir = path.join(nodeModulesDir, "node-llama-cpp", "llama", "localBuilds");
+  try {
+    if (!fs.existsSync(localBuildsDir)) return undefined;
+    const entries = fs.readdirSync(localBuildsDir);
+    let highestRelease: string | undefined = undefined;
+    let highestNum = -1;
+    for (const entry of entries) {
+      const match = entry.match(/release-b(\d+)/i);
+      if (match) {
+        const num = Number(match[1]);
+        if (num > highestNum) {
+          if (fs.existsSync(path.join(localBuildsDir, entry, "buildDone.status"))) {
+            highestNum = num;
+            highestRelease = `b${num}`;
+          }
+        }
+      }
+    }
+    return highestRelease;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Read the bundled llama.cpp release from a node_modules dir. Primary source is
  * node-llama-cpp's own `llama/binariesGithubRelease.json` (present in a clean
@@ -95,6 +120,9 @@ function locateNodeModulesDir(): string | undefined {
  * (present after a local source build).
  */
 export function readReleaseRecord(nodeModulesDir: string): string | undefined {
+  const localBuild = findHighestLocalBuild(nodeModulesDir);
+  if (localBuild) return localBuild;
+
   try {
     const info = JSON.parse(
       fs.readFileSync(path.join(nodeModulesDir, "node-llama-cpp", "llama", "binariesGithubRelease.json"), "utf8")
@@ -105,6 +133,7 @@ export function readReleaseRecord(nodeModulesDir: string): string | undefined {
   }
   return readBundledLlamaReleaseFrom(nodeModulesDir);
 }
+
 
 /** The llama.cpp release the installed engine was built from (or undefined). */
 export function readBundledLlamaRelease(): string | undefined {

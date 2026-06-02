@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   compatibilityFromSize,
   detectFormat,
@@ -7,7 +7,8 @@ import {
   matchPattern,
   parseSplitGgufPath,
   validateHuggingFacePath,
-  validateHuggingFaceRepoId
+  validateHuggingFaceRepoId,
+  fetchHuggingFaceFileSha256
 } from "../sources/huggingface.js";
 
 describe("huggingface source helpers", () => {
@@ -117,5 +118,34 @@ describe("huggingface source helpers", () => {
     expect(grouped[0].sizeBytes).toBeUndefined();
     expect(grouped[0].fit.level).toBe("unknown");
     expect(grouped[0].fit.label).toBe("Multipart GGUF");
+  });
+
+  describe("fetchHuggingFaceFileSha256", () => {
+    it("resolves the SHA256 from fetch mock response", async () => {
+      const mockFetch = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => [
+          {
+            path: "model.gguf",
+            lfs: { oid: "abc123expectedsha256" }
+          }
+        ]
+      } as any);
+
+      const sha = await fetchHuggingFaceFileSha256("org/model", "main", "model.gguf");
+      expect(sha).toBe("abc123expectedsha256");
+      expect(mockFetch).toHaveBeenCalled();
+      mockFetch.mockRestore();
+    });
+
+    it("returns undefined on fetch error or mismatch", async () => {
+      const mockFetch = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: false
+      } as any);
+
+      const sha = await fetchHuggingFaceFileSha256("org/model", "main", "model.gguf");
+      expect(sha).toBeUndefined();
+      mockFetch.mockRestore();
+    });
   });
 });

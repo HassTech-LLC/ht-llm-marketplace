@@ -278,3 +278,22 @@ interface HfFile {
   type?: string;
   size?: number;
 }
+
+export async function fetchHuggingFaceFileSha256(repoId: string, revision = "main", filename: string): Promise<string | undefined> {
+  try {
+    const url = `${HUB}/api/models/${encodeRepoId(validateHuggingFaceRepoId(repoId))}/paths-info/${encodeURIComponent(validateHuggingFaceRevision(revision))}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `paths=${encodeURIComponent(validateHuggingFacePath(filename))}`
+    });
+    if (response.ok) {
+      const data = await response.json() as any[];
+      const info = data.find((item) => item.path === filename);
+      return info?.lfs?.oid || info?.oid;
+    }
+  } catch {
+    // Fallback gracefully if paths-info fails
+  }
+  return undefined;
+}

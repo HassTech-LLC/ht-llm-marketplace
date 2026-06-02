@@ -65,7 +65,7 @@ export class MarketplaceStore {
         `INSERT INTO artifacts
           (id, source, runtime, name, display_name, repo_id, filename, revision, path, size_bytes, sha256, verification_status, verified_at, expected_bytes, actual_bytes, source_url, etag, last_modified, owned, runnable, loaded, notes, created_at, updated_at)
         VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           source=excluded.source,
           runtime=excluded.runtime,

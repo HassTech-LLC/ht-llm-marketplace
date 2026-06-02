@@ -9,7 +9,8 @@ import {
   huggingFaceResolveUrl,
   validateHuggingFacePath,
   validateHuggingFaceRepoId,
-  validateHuggingFaceRevision
+  validateHuggingFaceRevision,
+  fetchHuggingFaceFileSha256
 } from "../sources/huggingface.js";
 import { fetchWithTimeout } from "../http.js";
 import type { MarketplaceStore } from "../store.js";
@@ -441,7 +442,11 @@ export class DownloadManager extends EventEmitter {
         if (request.expectedBytes !== undefined && sizeBytes !== request.expectedBytes) {
           throw new Error(`Downloaded byte count mismatch: expected ${request.expectedBytes}, got ${sizeBytes}`);
         }
+        const expectedSha256 = await fetchHuggingFaceFileSha256(repoId, request.revision || "main", filename).catch(() => undefined);
         const sha256 = await sha256File(targetPath);
+        if (expectedSha256 && sha256 !== expectedSha256) {
+          throw new Error(`Model hash verification failed: expected ${expectedSha256}, got ${sha256}`);
+        }
         
         let ollamaRegistered = false;
         let warmNote = "";

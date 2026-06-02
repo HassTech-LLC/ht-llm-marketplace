@@ -4,6 +4,17 @@ import http from "node:http";
 import EventEmitter from "node:events";
 import fs from "node:fs";
 
+vi.mock("../engine/doctor.js", async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    readBundledLlamaRelease: () => "b8390"
+  };
+});
+
+
+const PRIVILEGED_HEADERS = { "x-ht-studio-confirm": "privileged-action" };
+
 // Helper to create mock request
 function createMockRequest(method: string, urlPath: string, bodyObj?: any, headers?: Record<string, string>) {
   const req = new EventEmitter() as any;
@@ -113,7 +124,18 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
         status: vi.fn().mockResolvedValue({ id: "lmstudio", online: false })
       },
       downloads: {
-        list: vi.fn().mockReturnValue([])
+        list: vi.fn().mockReturnValue([]),
+        start: vi.fn().mockImplementation((body: any) => Promise.resolve({
+          id: "job-download",
+          type: "hf-file",
+          status: "queued",
+          progress: 0,
+          source: body.source,
+          target: body.filename || body.model || body.ref,
+          message: "queued",
+          startedAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString()
+        }))
       },
       engine: {
         available: true,
@@ -145,10 +167,25 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
             path: "./models/Phi-3-mini-4k-instruct-q4.gguf",
             name: "phi-3",
             sizeBytes: 2200000000,
-            source: "marketplace",
+            source: "HT Studio",
             dir: "models",
             runnable: true,
-            indexedAt: new Date(0).toISOString()
+            indexedAt: new Date(0).toISOString(),
+            trustLevel: "owned",
+            autoWarmEligible: true
+          },
+          {
+            id: "./research/research-fast.gguf",
+            path: "./research/research-fast.gguf",
+            name: "research-fast",
+            sizeBytes: 1000000000,
+            source: "HT LLM Research",
+            dir: "research",
+            runnable: true,
+            indexedAt: new Date(0).toISOString(),
+            trustLevel: "ambient",
+            autoWarmEligible: false,
+            trustReason: "reference workspace"
           },
           {
             id: "virtual:ternary-ssm-specialist",
@@ -158,21 +195,38 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
             source: "Virtual-SSM",
             dir: "virtual-core",
             runnable: true,
-            indexedAt: new Date(0).toISOString()
+            indexedAt: new Date(0).toISOString(),
+            trustLevel: "virtual",
+            autoWarmEligible: false
           }
         ]),
         snapshot: vi.fn().mockReturnValue({
-          status: { state: "ready", ttlMs: 30000, modelCount: 2 },
+          status: { state: "ready", ttlMs: 30000, modelCount: 3 },
           models: [
             {
               id: "./models/Phi-3-mini-4k-instruct-q4.gguf",
               path: "./models/Phi-3-mini-4k-instruct-q4.gguf",
               name: "phi-3",
               sizeBytes: 2200000000,
-              source: "marketplace",
+              source: "HT Studio",
               dir: "models",
               runnable: true,
-              indexedAt: new Date(0).toISOString()
+              indexedAt: new Date(0).toISOString(),
+              trustLevel: "owned",
+              autoWarmEligible: true
+            },
+            {
+              id: "./research/research-fast.gguf",
+              path: "./research/research-fast.gguf",
+              name: "research-fast",
+              sizeBytes: 1000000000,
+              source: "HT LLM Research",
+              dir: "research",
+              runnable: true,
+              indexedAt: new Date(0).toISOString(),
+              trustLevel: "ambient",
+              autoWarmEligible: false,
+              trustReason: "reference workspace"
             },
             {
               id: "virtual:ternary-ssm-specialist",
@@ -182,7 +236,9 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
               source: "Virtual-SSM",
               dir: "virtual-core",
               runnable: true,
-              indexedAt: new Date(0).toISOString()
+              indexedAt: new Date(0).toISOString(),
+              trustLevel: "virtual",
+              autoWarmEligible: false
             }
           ]
         }),
@@ -190,7 +246,7 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
           status: { state: "ready", ttlMs: 30000, modelCount: 2 },
           models: []
         }),
-        status: vi.fn().mockReturnValue({ state: "ready", ttlMs: 30000, modelCount: 2 })
+        status: vi.fn().mockReturnValue({ state: "ready", ttlMs: 30000, modelCount: 3 })
       },
       queue: {
         run: vi.fn((_label: string, work: any) => work(new AbortController().signal)),
@@ -292,6 +348,24 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(parsed.recommendations[0]).toContain("Server is ready");
   });
 
+  it("GET /api/compatibility/scorecard reports automatic routing and ambient trust boundaries", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/compatibility/scorecard");
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.standardRoute.selected.name).toBe("phi-3");
+    expect(parsed.trust.automaticEligible).toBeGreaterThanOrEqual(1);
+    expect(parsed.trust.ambientDiscovered).toBe(1);
+    expect(parsed.trust.skippedAmbient).toBe(1);
+    expect(parsed.recommendations.some((item: string) => item.includes("manual loading"))).toBe(true);
+  });
+
   it("POST /api/show returns local model metadata in Ollama shape", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);
@@ -343,6 +417,48 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     const parsed = JSON.parse(res.body);
     expect(parsed.index.state).toBe("ready");
     expect(parsed.models.some((model: any) => model.name === "phi-3")).toBe(true);
+  });
+
+  it("POST /api/downloads requires explicit license acceptance for Hugging Face installs", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/downloads", {
+      source: "huggingface",
+      runtime: "llamacpp",
+      repoId: "test/model",
+      filename: "model.Q4_K_M.gguf"
+    }, PRIVILEGED_HEADERS);
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toContain("licenseAccepted");
+    expect(mockContext.downloads.start).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/downloads accepts Hugging Face installs after license review is marked", async () => {
+    const mockContext = createMockContext();
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/downloads", {
+      source: "huggingface",
+      runtime: "llamacpp",
+      repoId: "test/model",
+      filename: "model.Q4_K_M.gguf",
+      license: "Apache-2.0",
+      licenseAccepted: true
+    }, PRIVILEGED_HEADERS);
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(202);
+    expect(mockContext.downloads.start).toHaveBeenCalledWith(expect.objectContaining({
+      license: "Apache-2.0",
+      licenseAccepted: true
+    }));
   });
 
   it("GET /api/routing/standard returns benchmark-aware standard route decision", async () => {
@@ -418,7 +534,12 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(getRes.statusCode).toBe(200);
     expect(JSON.parse(getRes.body).config.backend).toBe("in-process");
 
-    const putReq = createMockRequest("PUT", "/api/engine/config", { contextSize: 999999, delegatedServer: { parallel: 99 } });
+    const putReq = createMockRequest(
+      "PUT",
+      "/api/engine/config",
+      { contextSize: 999999, delegatedServer: { parallel: 99 } },
+      PRIVILEGED_HEADERS
+    );
     const putRes = createMockResponse();
 
     await handler(putReq, putRes);
@@ -776,7 +897,7 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
 
     const req = createMockRequest("POST", "/api/runtimes/llamacpp/load", {
       path: "/home/user/.ollama/models/blobs/sha256-11223344556677889900aabbccddeeff"
-    });
+    }, PRIVILEGED_HEADERS);
     const res = createMockResponse();
 
     try {
@@ -788,6 +909,206 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     } finally {
       mockFs.mockRestore();
     }
+  });
+
+  it("GET /api/server/readiness flags multiRuntimeVramResident warning when multiple runtimes are active", async () => {
+    const mockContext = createMockContext();
+    mockContext.ollama.status.mockResolvedValue({
+      id: "ollama",
+      online: true,
+      loadedModels: [{ id: "ollama-model", name: "ollama-model", loaded: true, runtime: "ollama" }]
+    });
+    mockContext.lmstudio.status.mockResolvedValue({
+      id: "lmstudio",
+      online: true,
+      loadedModels: [{ id: "lms-model", name: "lms-model", loaded: true, runtime: "lmstudio" }]
+    });
+
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("GET", "/api/server/readiness");
+    const res = createMockResponse();
+
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.multiRuntimeVramResident.active).toBe(true);
+    expect(parsed.multiRuntimeVramResident.ollama).toHaveLength(1);
+    expect(parsed.multiRuntimeVramResident.lmstudio).toHaveLength(1);
+    expect(parsed.warnings.some((w: string) => w.includes("VRAM saturation alert"))).toBe(true);
+  });
+
+  it("POST /api/runtimes/evict-all unloads Ollama, LM Studio, and in-process active models", async () => {
+    const mockContext = createMockContext();
+    mockContext.ollama.ps = vi.fn().mockResolvedValue([{ name: "ollama-model-1" }]);
+    mockContext.ollama.unload = vi.fn().mockResolvedValue(undefined);
+    mockContext.lmstudio.unload = vi.fn().mockResolvedValue(undefined);
+    mockContext.engine.unload = vi.fn().mockResolvedValue(undefined);
+
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/api/runtimes/evict-all", {}, PRIVILEGED_HEADERS);
+    const res = createMockResponse();
+
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.ollamaEvicted).toEqual(["ollama-model-1"]);
+    expect(parsed.lmstudioEvicted).toEqual(["all"]);
+    expect(mockContext.lmstudio.unload).toHaveBeenCalled();
+    expect(mockContext.ollama.unload).toHaveBeenCalledWith("ollama-model-1");
+    expect(mockContext.engine.unload).toHaveBeenCalled();
+  });
+
+  describe("Bilingual / Multilingual GGUF Safety Prompt Guard", () => {
+    it("POST /api/chat prepends the default English-only system message if none is provided", async () => {
+      const mockContext = createMockContext();
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        model: "phi-3",
+        messages: [{ role: "user", content: "hi" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.engine.chat).toHaveBeenCalledWith(
+        [
+          { role: "system", content: "You are a helpful assistant. Always respond strictly in English." },
+          { role: "user", content: "hi" }
+        ],
+        expect.any(Object)
+      );
+    });
+
+    it("POST /api/chat accepts empty system prompt to bypass/disable the guard", async () => {
+      const mockContext = createMockContext();
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        model: "phi-3",
+        messages: [
+          { role: "system", content: "" },
+          { role: "user", content: "hi" }
+        ],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.engine.chat).toHaveBeenCalledWith(
+        [
+          { role: "system", content: "" },
+          { role: "user", content: "hi" }
+        ],
+        expect.any(Object)
+      );
+    });
+
+    it("POST /api/chat honors a custom system prompt and does not overwrite it", async () => {
+      const mockContext = createMockContext();
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        model: "phi-3",
+        messages: [
+          { role: "system", content: "Always respond in Spanish" },
+          { role: "user", content: "hi" }
+        ],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.engine.chat).toHaveBeenCalledWith(
+        [
+          { role: "system", content: "Always respond in Spanish" },
+          { role: "user", content: "hi" }
+        ],
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe("Unsupported Architecture Fallback to Ollama", () => {
+    it("POST /api/chat auto-registers and falls back to Ollama when architecture is unsupported and Ollama is online", async () => {
+      const mockContext = createMockContext();
+      
+      // Make phi-3 architecture unsupported for the bundled release
+      mockContext.engine.readArchitecture.mockResolvedValue("gemma4");
+      // Ollama status is online
+      mockContext.ollama.status.mockResolvedValue({ id: "ollama", online: true });
+      mockContext.ollama.createModel = vi.fn().mockResolvedValue(undefined);
+      
+      const upstreamBody = { ok: true, status: 200, headers: new Map([["content-type", "application/json"]]), body: {
+        getReader() {
+          let count = 0;
+          return {
+            async read() {
+              if (count > 0) return { done: true, value: undefined };
+              count++;
+              return { done: false, value: new TextEncoder().encode(JSON.stringify({ model: "ht-phi-3", message: { role: "assistant", content: "Ollama fallback content" }, done: true })) };
+            }
+          };
+        }
+      } };
+      mockContext.ollama.chat.mockResolvedValue(upstreamBody);
+
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        model: "phi-3",
+        messages: [{ role: "user", content: "hi" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.ollama.createModel).toHaveBeenCalledWith("ht-phi-3", expect.stringContaining("FROM"));
+      expect(mockContext.engine.load).toHaveBeenCalledWith(expect.objectContaining({
+        modelPath: "virtual:ollama:ht-phi-3"
+      }));
+      expect(mockContext.ollama.chat).toHaveBeenCalled();
+      const parsed = JSON.parse(res.body);
+      expect(parsed.message.content).toBe("Ollama fallback content");
+    });
+
+    it("POST /api/chat throws 422 error when architecture is unsupported and Ollama is offline", async () => {
+      const mockContext = createMockContext();
+      
+      mockContext.engine.readArchitecture.mockResolvedValue("gemma4");
+      mockContext.ollama.status.mockResolvedValue({ id: "ollama", online: false });
+
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/chat", {
+        runtime: "llamacpp",
+        model: "phi-3",
+        messages: [{ role: "user", content: "hi" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(422);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.error).toContain("Model architecture 'gemma4' needs llama.cpp");
+    });
   });
 });
 

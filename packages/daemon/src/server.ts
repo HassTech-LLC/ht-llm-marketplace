@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { RuntimeLoadRequest, RuntimeModel, StartDownloadRequest } from "@ht-llm-marketplace/sdk";
+import type { RuntimeLoadRequest, RuntimeModel, StartDownloadRequest, ModelIndexEntry, ModelTrustLevel, EngineResidencyPlan } from "@ht-llm-marketplace/sdk";
 import { OllamaAdapter } from "./adapters/ollama.js";
 import { LmStudioAdapter } from "./adapters/lmstudio.js";
 import { openAiCompatibleStatus } from "./adapters/openai.js";
@@ -180,12 +180,14 @@ export function createServer(context: RuntimeContext) {
 
       if (route === "GET /api/models/index") {
         const models = await context.modelIndex.models();
-        return json(response, { index: context.modelIndex.status(), models: withLoadedState(context, models) });
+        const merged = await mergeActiveRuntimeModels(context, models);
+        return json(response, { index: context.modelIndex.status(), models: withLoadedState(context, merged) });
       }
 
       if (route === "POST /api/models/index/refresh") {
         const snapshot = await context.modelIndex.refresh("manual");
-        return json(response, { index: snapshot.status, models: withLoadedState(context, snapshot.models) });
+        const merged = await mergeActiveRuntimeModels(context, snapshot.models);
+        return json(response, { index: snapshot.status, models: withLoadedState(context, merged) });
       }
 
       if (route === "GET /api/benchmarks") {
@@ -203,6 +205,10 @@ export function createServer(context: RuntimeContext) {
 
       if (route === "GET /api/routing/standard") {
         return json(response, standardRouteDecision(context, await context.modelIndex.models()));
+      }
+
+      if (route === "GET /api/compatibility/scorecard") {
+        return json(response, await compatibilityScorecard(context));
       }
 
       if (route === "GET /api/engine/hot-pool") {
@@ -408,6 +414,46 @@ export function createServer(context: RuntimeContext) {
         return json(response, { ok: true, message: await context.lmstudio.startServer(port) });
       }
 
+      if (route === "POST /api/runtimes/evict-all") {
+        const lmstudioEvicted = [];
+        try {
+          await context.lmstudio.unload();
+          lmstudioEvicted.push("all");
+        } catch {
+          // Ignored
+        }
+
+        const ollamaEvicted = [];
+        try {
+          const loadedOllama = await context.ollama.ps();
+          for (const m of loadedOllama) {
+            await context.ollama.unload(m.name);
+            ollamaEvicted.push(m.name);
+          }
+        } catch {
+          // Ignored
+        }
+
+        try {
+          await context.engine.unload();
+        } catch {
+          // Ignored
+        }
+
+        context.store.audit("multi-runtime-eviction", "all", {
+          ollamaEvicted,
+          lmstudioEvicted,
+          origin: request.headers.origin || "no-origin"
+        });
+
+        return json(response, {
+          ok: true,
+          message: "Triggered eviction of resident models in Ollama, LM Studio, and built-in engine to clear GPU VRAM.",
+          ollamaEvicted,
+          lmstudioEvicted
+        });
+      }
+
       if (route === "POST /api/engine/upgrade") {
         context.store.audit("engine-upgrade-triggered", "node-llama-cpp", { origin: request.headers.origin || "no-origin" });
         void runEngineUpgrade(context);
@@ -496,23 +542,21 @@ export function createServer(context: RuntimeContext) {
       if (route === "POST /api/runtimes/llamacpp/load") {
         const body = sanitizeEngineLoadRequest(await readJson<unknown>(request));
         const target = resolveEngineModelPath(context, body);
-        if (!target.path.startsWith("virtual:")) {
-          const support = await engineArchSupport(context, target.path);
-          if (!support.supported) {
-            return json(response, { ok: false, error: support.reason, architecture: support.architecture, minRelease: support.minRelease }, 422);
-          }
+        try {
+          const result = await safeLoadEngineModel(context, {
+            modelPath: target.path,
+            displayName: target.displayName,
+            systemPrompt: body.systemPrompt,
+            gpuLayers: body.gpuLayers,
+            contextSize: body.contextSize,
+            threads: body.threads,
+            draftModelPath: body.draftModelPath
+          });
+          context.store.audit("engine-load", target.displayName, { path: target.path, gpu: result.gpu });
+          return json(response, { ok: true, loaded: result.loaded, gpu: result.gpu });
+        } catch (err) {
+          return json(response, { ok: false, error: (err as Error).message }, 422);
         }
-        const result = await context.engine.load({
-          modelPath: target.path,
-          displayName: target.displayName,
-          systemPrompt: body.systemPrompt,
-          gpuLayers: body.gpuLayers,
-          contextSize: body.contextSize,
-          threads: body.threads,
-          draftModelPath: body.draftModelPath
-        });
-        context.store.audit("engine-load", target.displayName, { path: target.path, gpu: result.gpu });
-        return json(response, { ok: true, loaded: result.loaded, gpu: result.gpu });
       }
 
       if (route === "POST /api/runtimes/llamacpp/unload") {
@@ -642,6 +686,9 @@ export function createServer(context: RuntimeContext) {
 
       if (route === "POST /api/chat") {
         const body = requireObject(await readJson<Record<string, unknown>>(request));
+        if (Array.isArray(body.messages)) {
+          body.messages = applyBilingualSystemPromptGuard(body.messages as ChatMessage[]);
+        }
         const requestedRuntime = typeof body?.runtime === "string" ? body.runtime : undefined;
         const wantsLlamaCpp = requestedRuntime === "llamacpp" || body?.engine === "llamacpp";
         const wantsExternalRuntime = Boolean(requestedRuntime && requestedRuntime !== "llamacpp");
@@ -706,6 +753,7 @@ async function serverReadiness(context: RuntimeContext) {
   const queue = context.queue.status();
   const hotPool = context.hotPool.status(runtimeConfig);
   const localRunnableModels = models.filter((model) => model.runnable && !model.path.startsWith("virtual:"));
+  const trust = modelTrustSummary(models, hotPool.residencyPlan);
   const loadedModels = [
     ...(context.engine.loadedModel ? [context.engine.loadedModel] : []),
     ...hotPool.entries.filter((entry) => entry.state === "ready").map((entry) => entry.model)
@@ -735,10 +783,31 @@ async function serverReadiness(context: RuntimeContext) {
   if (hotPool.enabled && hotPool.entries.filter((entry) => entry.state === "ready").length === 0) {
     warnings.push("Hot model pool is enabled but has no ready entries yet.");
   }
+
+  const ollamaStatus = runtimes.find((r) => r.id === "ollama");
+  const lmStudioStatus = runtimes.find((r) => r.id === "lmstudio");
+  const ollamaLoaded = ollamaStatus?.loadedModels || [];
+  const lmstudioLoaded = lmStudioStatus?.loadedModels || [];
+  const inprocessLoaded = loadedModels.map((m) => ({ id: m, name: m, runtime: "llamacpp" as const }));
+  const activeRuntimesCount =
+    (ollamaLoaded.length > 0 ? 1 : 0) +
+    (lmstudioLoaded.length > 0 ? 1 : 0) +
+    (inprocessLoaded.length > 0 ? 1 : 0);
+  const multiRuntimeVramResident = {
+    active: activeRuntimesCount > 1,
+    ollama: ollamaLoaded,
+    lmstudio: lmstudioLoaded,
+    inprocess: inprocessLoaded
+  };
+  if (multiRuntimeVramResident.active) {
+    warnings.push("VRAM saturation alert: Multiple active local model engines are resident in VRAM. Consider evicting unused external runtimes.");
+  }
+
   return {
     ok: blockers.length === 0,
     mode: runtimeConfig.backend,
     version: DAEMON_VERSION,
+    multiRuntimeVramResident,
     endpoints,
     runtime: {
       engineAvailable: Boolean(engineRuntime?.online),
@@ -749,8 +818,11 @@ async function serverReadiness(context: RuntimeContext) {
     models: {
       indexed: models.length,
       runnableLocal: localRunnableModels.length,
+      automaticEligible: trust.automaticEligible,
+      ambientDiscovered: trust.ambientDiscovered,
       loaded: loadedModels
     },
+    trust,
     queue,
     hotPool,
     blockers,
@@ -763,6 +835,85 @@ async function serverReadiness(context: RuntimeContext) {
         ]
       : ["Server is ready for local OpenAI/Ollama-compatible single-user inference."]
   };
+}
+
+async function compatibilityScorecard(context: RuntimeContext): Promise<any> {
+  const [models, readiness] = await Promise.all([context.modelIndex.models(), serverReadiness(context)]);
+  const config = context.store.getRuntimeConfig();
+  const standardRoute = standardRouteDecision(context, models);
+  const residencyPlan = await residencyPlanForContext(context);
+  const trust = modelTrustSummary(models, residencyPlan);
+  const recommendations = compatibilityRecommendations(readiness.recommendations, standardRoute.selected, trust);
+
+  return {
+    ok: Boolean(readiness.ok && (standardRoute.selected || readiness.models.loaded.length > 0)),
+    generatedAt: new Date().toISOString(),
+    readiness: {
+      ok: readiness.ok,
+      mode: readiness.mode,
+      blockers: readiness.blockers,
+      warnings: readiness.warnings,
+      recommendations: readiness.recommendations
+    },
+    endpoints: readiness.endpoints,
+    standardRoute,
+    queue: readiness.queue,
+    runtime: {
+      backend: config.backend,
+      residencyMode: config.residencyMode,
+      hotPoolEnabled: config.hotPool.enabled,
+      delegatedServerEnabled: config.delegatedServer.enabled
+    },
+    trust,
+    recommendations
+  };
+}
+
+function compatibilityRecommendations(
+  existing: string[],
+  selected: ModelIndexEntry | null,
+  trust: ReturnType<typeof modelTrustSummary>
+) {
+  const recommendations = [...existing];
+  if (!selected) {
+    recommendations.push("Install a model through HT Studio, use Ollama/LM Studio, or add a deliberate HT_STUDIO_MODEL_DIRS root to enable automatic standard routing.");
+  }
+  if (trust.ambientDiscovered > 0) {
+    recommendations.push(`${trust.ambientDiscovered} ambient model(s) are visible for manual loading but excluded from automatic startup warmup.`);
+  }
+  return [...new Set(recommendations)];
+}
+
+function modelTrustSummary(models: ModelIndexEntry[], residencyPlan?: EngineResidencyPlan) {
+  const levels: Record<ModelTrustLevel, number> = {
+    owned: 0,
+    configured: 0,
+    "installed-runtime": 0,
+    ambient: 0,
+    virtual: 0
+  };
+  const physical = models.filter((model) => !model.path.startsWith("virtual:"));
+  for (const model of models) {
+    levels[modelTrustLevel(model)] += 1;
+  }
+  return {
+    policy: "Owned, configured, Ollama, and LM Studio models can be used for automatic routing/residency; broad filesystem and cache discoveries remain manual-only until explicitly configured.",
+    indexedPhysical: physical.length,
+    automaticEligible: physical.filter((model) => model.runnable && isAutomaticModel(model)).length,
+    ambientDiscovered: physical.filter((model) => modelTrustLevel(model) === "ambient").length,
+    skippedAmbient: residencyPlan?.skipped.filter((candidate) => modelTrustLevel(candidate.model) === "ambient").length ?? 0,
+    levels
+  };
+}
+
+function modelTrustLevel(model: ModelIndexEntry): ModelTrustLevel {
+  if (model.path.startsWith("virtual:")) return "virtual";
+  return model.trustLevel ?? "owned";
+}
+
+function isAutomaticModel(model: ModelIndexEntry) {
+  if (model.autoWarmEligible === false || modelTrustLevel(model) === "ambient") return false;
+  return true;
 }
 
 function standardRouteDecision(context: RuntimeContext, models = context.modelIndex.snapshot().models) {
@@ -997,10 +1148,14 @@ async function loadStandardRouteModel(context: RuntimeContext) {
   if (context.engine.isLoaded()) return;
   const decision = standardRouteDecision(context, await context.modelIndex.models());
   if (!decision.selected) return;
-  await context.engine.load({
-    modelPath: decision.selected.path,
-    displayName: decision.selected.name
-  });
+  try {
+    await safeLoadEngineModel(context, {
+      modelPath: decision.selected.path,
+      displayName: decision.selected.name
+    });
+  } catch (err) {
+    console.error("Failed to load standard route model:", err);
+  }
 }
 
 function ownedEngineModels(context: RuntimeContext): RuntimeModel[] {
@@ -1056,11 +1211,11 @@ async function textGenerationTarget(context: RuntimeContext, requestedModel?: st
   if (requestedModel && context.engine.loadedModel !== requestedModel) {
     const target = resolveLocalModelByName(context, requestedModel);
     if (target) {
-      if (!target.path.startsWith("virtual:")) {
-        const support = await engineArchSupport(context, target.path);
-        if (!support.supported) throw httpError(422, support.reason || `Model architecture is not supported: ${support.architecture}`);
+      try {
+        await safeLoadEngineModel(context, { modelPath: target.path, displayName: target.displayName });
+      } catch (err) {
+        throw httpError(422, (err as Error).message);
       }
-      await context.engine.load({ modelPath: target.path, displayName: target.displayName });
     } else if (!canUseLoadedModelAlias(context, requestedModel)) {
       throw httpError(404, `Model not found locally: ${requestedModel}`);
     }
@@ -1130,6 +1285,13 @@ async function ollamaGenerate(
   }
 
   const target = await textGenerationTarget(context, body.model);
+  if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+    const fallbackName = context.engine.loadedPath.slice("virtual:ollama:".length);
+    return delegatedOllamaGenerate(request, response, context.config.ollamaHost, {
+      ...body,
+      model: fallbackName
+    });
+  }
   const stream = body.stream !== false;
   if (!stream) {
     const content = await runTextGeneration(context, target, `generate:${target.modelName}`, body.messages, {
@@ -1175,20 +1337,8 @@ async function engineChat(
   if (body.model && context.engine.loadedModel !== body.model) {
     const target = resolveLocalModelByName(context, body.model);
     if (target) {
-      if (!target.path.startsWith("virtual:")) {
-        const support = await engineArchSupport(context, target.path);
-        if (!support.supported) {
-          const isOllamaModel = target.path.toLowerCase().includes("ollama") || target.path.toLowerCase().includes("blobs");
-          const ollamaStatus = await context.ollama.status();
-          if (isOllamaModel && ollamaStatus.online) {
-            useFallbackToOllama = true;
-          } else {
-            return json(response, { error: support.reason, architecture: support.architecture, minRelease: support.minRelease }, 422);
-          }
-        }
-      }
-      if (!useFallbackToOllama) {
-        await context.engine.load({
+      try {
+        await safeLoadEngineModel(context, {
           modelPath: target.path,
           displayName: target.displayName,
           systemPrompt: body.systemPrompt,
@@ -1196,6 +1346,12 @@ async function engineChat(
           contextSize: body.contextSize,
           threads: body.threads
         });
+        if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+          useFallbackToOllama = true;
+          body.model = context.engine.loadedPath.slice("virtual:ollama:".length);
+        }
+      } catch (err) {
+        return json(response, { error: (err as Error).message }, 422);
       }
     } else if (!canUseLoadedModelAlias(context, body.model)) {
       return json(response, { error: `Model not found locally: ${body.model}` }, 404);
@@ -1204,20 +1360,8 @@ async function engineChat(
 
   if (!useFallbackToOllama && !context.engine.isLoaded() && (body.artifactId || body.path)) {
     const target = resolveEngineModelPath(context, body);
-    if (!target.path.startsWith("virtual:")) {
-      const support = await engineArchSupport(context, target.path);
-      if (!support.supported) {
-        const isOllamaModel = target.path.toLowerCase().includes("ollama") || target.path.toLowerCase().includes("blobs");
-        const ollamaStatus = await context.ollama.status();
-        if (isOllamaModel && ollamaStatus.online) {
-          useFallbackToOllama = true;
-        } else {
-          return json(response, { error: support.reason, architecture: support.architecture, minRelease: support.minRelease }, 422);
-        }
-      }
-    }
-    if (!useFallbackToOllama) {
-      await context.engine.load({
+    try {
+      await safeLoadEngineModel(context, {
         modelPath: target.path,
         displayName: target.displayName,
         systemPrompt: body.systemPrompt,
@@ -1225,7 +1369,22 @@ async function engineChat(
         contextSize: body.contextSize,
         threads: body.threads
       });
+      if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+        useFallbackToOllama = true;
+        body.model = context.engine.loadedPath.slice("virtual:ollama:".length);
+      }
+    } catch (err) {
+      return json(response, { error: (err as Error).message }, 422);
     }
+  }
+
+  if (!useFallbackToOllama && !context.engine.isLoaded() && !body.model && !body.artifactId && !body.path) {
+    await loadStandardRouteModel(context);
+  }
+
+  if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+    useFallbackToOllama = true;
+    body.model = context.engine.loadedPath.slice("virtual:ollama:".length);
   }
 
   if (useFallbackToOllama) {
@@ -1500,6 +1659,30 @@ async function openAiLegacyCompletions(
   }
 
   const target = await textGenerationTarget(context, parsed.model);
+  if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+    const fallbackName = context.engine.loadedPath.slice("virtual:ollama:".length);
+    const upstream = await delegatedPostJson(request, `${context.config.ollamaHost}/v1/chat/completions`, {
+      model: fallbackName,
+      messages,
+      stream: parsed.stream,
+      max_tokens: parsed.maxTokens,
+      temperature: parsed.temperature
+    });
+    if (!parsed.stream) {
+      const payload = await safeJson(upstream);
+      if (!upstream.ok) return json(response, payload, upstream.status);
+      return json(response, openAiTextCompletion(fallbackName, extractOpenAiContent(payload)), upstream.status);
+    }
+    response.writeHead(upstream.status, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    if (!upstream.ok || !upstream.body) {
+      response.write(`data: ${JSON.stringify({ error: { message: await upstream.text() } })}\n\n`);
+      response.end();
+      return;
+    }
+    const id = `cmpl-${cryptoRandomId()}`;
+    await pipeOpenAiSseAsTextCompletion(upstream, response, fallbackName, id);
+    return;
+  }
   if (!parsed.stream) {
     let usage: OpenAiUsage | undefined;
     const content = await runTextGeneration(context, target, `completion:${target.modelName}`, messages, {
@@ -1730,12 +1913,105 @@ function localGgufSnapshot(context: RuntimeContext) {
   return context.modelIndex.snapshot().models;
 }
 
-function withLoadedState(context: RuntimeContext, models: Array<{ path: string }>) {
+async function mergeActiveRuntimeModels(context: RuntimeContext, discoveredModels: any[]): Promise<any[]> {
+  const merged = [...discoveredModels];
+
+  // 1. Ollama online models
+  try {
+    const ollamaStatus = await context.ollama.status();
+    if (ollamaStatus.online && Array.isArray(ollamaStatus.models)) {
+      for (const oModel of ollamaStatus.models) {
+        const alreadyExists = merged.some(
+          (m) =>
+            m.name.toLowerCase() === oModel.name.toLowerCase() ||
+            m.path.toLowerCase() === oModel.name.toLowerCase() ||
+            (m.source === "Ollama" && m.name.toLowerCase() === oModel.name.replace(/:latest$/, "").toLowerCase())
+        );
+        if (!alreadyExists) {
+          merged.push({
+            id: `ollama:${oModel.name}`,
+            name: oModel.name,
+            path: `ollama:${oModel.name}`,
+            sizeBytes: oModel.sizeBytes || 0,
+            source: "Ollama",
+            dir: "ollama-runtime",
+            runnable: true,
+            indexedAt: new Date().toISOString(),
+            trustLevel: "installed-runtime",
+            autoWarmEligible: true,
+            trustReason: "Active online model served by Ollama."
+          });
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore and proceed
+  }
+
+  // 2. LM Studio online models
+  try {
+    const lmStatus = await context.lmstudio.status();
+    if (lmStatus.online && Array.isArray(lmStatus.models)) {
+      for (const lModel of lmStatus.models) {
+        const alreadyExists = merged.some(
+          (m) =>
+            (m.path && lModel.path && m.path.toLowerCase() === lModel.path.toLowerCase()) ||
+            m.name.toLowerCase() === lModel.name.toLowerCase()
+        );
+        if (!alreadyExists) {
+          merged.push({
+            id: lModel.path || `lmstudio:${lModel.name}`,
+            name: lModel.name,
+            path: lModel.path || `lmstudio:${lModel.name}`,
+            sizeBytes: lModel.sizeBytes || 0,
+            source: "LM Studio",
+            dir: "lmstudio-runtime",
+            runnable: true,
+            indexedAt: new Date().toISOString(),
+            trustLevel: "installed-runtime",
+            autoWarmEligible: false,
+            trustReason: "Model discovered from LM Studio library."
+          });
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore and proceed
+  }
+
+  return merged;
+}
+
+function withLoadedState(context: RuntimeContext, models: Array<{ name: string; path: string }>) {
   const loadedPath = context.engine.loadedPath;
-  return models.map((model) => ({
-    ...model,
-    loaded: !!loadedPath && path.resolve(model.path).toLowerCase() === path.resolve(loadedPath).toLowerCase()
-  }));
+  if (!loadedPath) {
+    return models.map((m) => ({ ...m, loaded: false }));
+  }
+
+  const isVirtualOllama = loadedPath.startsWith("virtual:ollama:");
+  const fallbackModelName = isVirtualOllama ? loadedPath.slice("virtual:ollama:".length).toLowerCase() : "";
+
+  return models.map((model) => {
+    let isLoaded = false;
+    try {
+      isLoaded = path.resolve(model.path).toLowerCase() === path.resolve(loadedPath).toLowerCase();
+    } catch {
+      isLoaded = model.path.toLowerCase() === loadedPath.toLowerCase();
+    }
+
+    if (!isLoaded && isVirtualOllama) {
+      const normalizedModelName = model.name.toLowerCase();
+      isLoaded = 
+        fallbackModelName === normalizedModelName || 
+        fallbackModelName === `ht-${normalizedModelName}` ||
+        fallbackModelName === `ht-${normalizedModelName.replace(/[^a-z0-9.-]/g, "-")}`;
+    }
+
+    return {
+      ...model,
+      loaded: isLoaded
+    };
+  });
 }
 
 /** Arch-aware preflight: would the built-in engine's current release run this GGUF? */
@@ -1743,11 +2019,64 @@ async function engineArchSupport(context: RuntimeContext, modelPath: string) {
   return checkArchSupport(await context.engine.readArchitecture(modelPath), readBundledLlamaRelease());
 }
 
+async function safeLoadEngineModel(
+  context: RuntimeContext,
+  options: {
+    modelPath: string;
+    displayName?: string;
+    systemPrompt?: string;
+    gpuLayers?: number;
+    contextSize?: number;
+    threads?: number;
+    draftModelPath?: string;
+  }
+): Promise<{ loaded: string; gpu: string | false }> {
+  if (options.modelPath.startsWith("ollama:")) {
+    const ollamaModelName = options.modelPath.slice("ollama:".length);
+    return await context.engine.load({
+      modelPath: `virtual:ollama:${ollamaModelName}`,
+      displayName: options.displayName || ollamaModelName,
+      systemPrompt: options.systemPrompt,
+      gpuLayers: options.gpuLayers,
+      contextSize: options.contextSize,
+      threads: options.threads
+    });
+  }
+
+  if (!options.modelPath.startsWith("virtual:")) {
+    const support = await engineArchSupport(context, options.modelPath);
+    if (!support.supported) {
+      const ollamaStatus = await context.ollama.status();
+      if (ollamaStatus.online) {
+        const displayName = options.displayName || path.basename(options.modelPath);
+        const fallbackName = `ht-${displayName.toLowerCase().replace(/[^a-z0-9.-]/g, "-")}`;
+        const ollamaPath = options.modelPath.replace(/\\/g, "/");
+        const modelfileContent = `FROM "${ollamaPath}"`;
+        await context.ollama.createModel(fallbackName, modelfileContent);
+        
+        return await context.engine.load({
+          modelPath: `virtual:ollama:${fallbackName}`,
+          displayName: displayName,
+          systemPrompt: options.systemPrompt,
+          gpuLayers: options.gpuLayers,
+          contextSize: options.contextSize,
+          threads: options.threads
+        });
+      } else {
+        throw new Error(support.reason || `Model architecture is not supported: ${support.architecture}`);
+      }
+    }
+  }
+
+  return await context.engine.load(options);
+}
+
 async function runEngineUpgrade(context: RuntimeContext) {
   const cwd = path.resolve(process.cwd());
   try {
     await runProcess(npmExecutable(), ["install", "node-llama-cpp@latest", "-w", "@ht-llm-marketplace/daemon"], cwd);
-    await runProcess(npmExecutable(), ["run", "rebuild:cuda"], cwd);
+    const npxCmd = os.platform() === "win32" ? "npx.cmd" : "npx";
+    await runProcess(npxCmd, ["node-llama-cpp", "source", "download", "--release", "b8637", "--gpu", "auto"], cwd);
     context.store.audit("engine-upgrade-completed", "node-llama-cpp", { status: "completed" });
   } catch (error) {
     context.store.audit("engine-upgrade-failed", "node-llama-cpp", { error: (error as Error).message });
@@ -1759,7 +2088,8 @@ function runProcess(command: string, args: string[], cwd: string): Promise<void>
     const child = spawn(command, args, {
       cwd,
       stdio: "ignore",
-      windowsHide: true
+      windowsHide: true,
+      shell: process.platform === "win32"
     });
     child.once("error", reject);
     child.once("close", (code) => {
@@ -1818,6 +2148,8 @@ async function openAiChat(
     return json(response, { error: { message: (error as Error).message, type: "invalid_request_error" } }, 400);
   }
 
+  parsed.messages = applyBilingualSystemPromptGuard(parsed.messages);
+
   const delegated = await delegatedBackend(context, { model: parsed.model });
   if (delegated && "status" in delegated) {
     return json(response, { error: { message: delegated.message, type: "service_unavailable" } }, delegated.status);
@@ -1832,18 +2164,18 @@ async function openAiChat(
     });
   }
 
+  let useFallbackToOllama = false;
+
   // If a specific model was named and isn't the loaded one, load it from local storage.
   if (parsed.model && context.engine.loadedModel !== parsed.model) {
     const target = resolveLocalModelByName(context, parsed.model);
     if (target) {
-      if (!target.path.startsWith("virtual:")) {
-        const support = await engineArchSupport(context, target.path);
-        if (!support.supported) {
-          return json(response, { error: { message: support.reason, type: "model_not_supported" } }, 422);
-        }
-      }
       try {
-        await context.engine.load({ modelPath: target.path, displayName: target.displayName });
+        await safeLoadEngineModel(context, { modelPath: target.path, displayName: target.displayName });
+        if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+          useFallbackToOllama = true;
+          parsed.model = context.engine.loadedPath.slice("virtual:ollama:".length);
+        }
       } catch (error) {
         return json(response, { error: { message: `Failed to load model '${parsed.model}': ${(error as Error).message}` } }, 500);
       }
@@ -1851,9 +2183,25 @@ async function openAiChat(
       return json(response, { error: { message: `Model not found locally: ${parsed.model}`, type: "model_not_found" } }, 404);
     }
   }
-  if (!context.engine.isLoaded() && !parsed.model) {
+  if (!useFallbackToOllama && !context.engine.isLoaded() && !parsed.model) {
     await loadStandardRouteModel(context);
   }
+
+  if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
+    useFallbackToOllama = true;
+    parsed.model = context.engine.loadedPath.slice("virtual:ollama:".length);
+  }
+
+  if (useFallbackToOllama) {
+    return delegatedOpenAiChat(request, response, context.config.ollamaHost, {
+      model: parsed.model,
+      messages: parsed.messages,
+      stream: parsed.stream,
+      maxTokens: parsed.maxTokens,
+      temperature: parsed.temperature
+    });
+  }
+
   if (!context.engine.isLoaded()) {
     return json(
       response,
@@ -2019,23 +2367,63 @@ function writeResponseEvent(response: http.ServerResponse, event: string, data: 
 async function runLocalBenchmark(context: RuntimeContext, input: { model?: string; prompt?: string }) {
   if (input.model && context.engine.loadedModel !== input.model) {
     const target = resolveLocalModelByName(context, input.model);
-    if (target) await context.engine.load({ modelPath: target.path, displayName: target.displayName });
+    if (target) {
+      try {
+        await safeLoadEngineModel(context, { modelPath: target.path, displayName: target.displayName });
+      } catch (err) {
+        throw httpError(422, (err as Error).message);
+      }
+    }
   }
   if (!context.engine.isLoaded()) {
     throw httpError(400, "Load a local model before running a benchmark.");
   }
   try {
+    const isVirtualOllama = context.engine.loadedPath?.startsWith("virtual:ollama:");
+    const fallbackName = isVirtualOllama ? context.engine.loadedPath!.slice("virtual:ollama:".length) : "";
+
     const benchmark = await context.queue.run(`benchmark:${context.engine.loadedModel || input.model || "loaded"}`, (signal) =>
       runBenchmark({
         model: context.engine.loadedModel || input.model,
         runtime: "llamacpp",
         prompt: input.prompt,
-        chat: (messages, options) =>
-          context.engine.chat(messages, {
-            signal,
-            maxTokens: options.maxTokens,
-            onToken: options.onToken
-          })
+        chat: isVirtualOllama
+          ? async (messages, options) => {
+              const res = await context.ollama.chat({
+                model: fallbackName,
+                messages,
+                stream: true
+              }, { signal });
+              if (!res.body) return "";
+              const reader = res.body.getReader();
+              const decoder = new TextDecoder();
+              let fullText = "";
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value);
+                const lines = chunk.split("\n").filter(Boolean);
+                for (const line of lines) {
+                  try {
+                    const parsed = JSON.parse(line);
+                    const content = parsed.message?.content || "";
+                    if (content) {
+                      options.onToken(content);
+                      fullText += content;
+                    }
+                  } catch {
+                    // Ignore parsing errors
+                  }
+                }
+              }
+              return fullText;
+            }
+          : (messages, options) =>
+              context.engine.chat(messages, {
+                signal,
+                maxTokens: options.maxTokens,
+                onToken: options.onToken
+              })
       })
     );
     return context.store.addBenchmark(benchmark);
@@ -2174,6 +2562,11 @@ function sanitizeDownloadRequest(body: unknown): StartDownloadRequest {
   if (source === "huggingface") {
     request.repoId = validateHuggingFaceRepoId(requireString(input.repoId, "repoId", 200));
     request.revision = validateHuggingFaceRevision(optionalString(input.revision, "revision", 200) || "main");
+    request.license = optionalString(input.license, "license", 200);
+    request.licenseAccepted = input.licenseAccepted === true;
+    if (!request.licenseAccepted) {
+      throw httpError(400, "Hugging Face downloads require licenseAccepted: true after reviewing the model card and license.");
+    }
     const filenames = Array.isArray(input.filenames)
       ? input.filenames.map((item) => validateHuggingFacePath(requireString(item, "filename", 500)))
       : [validateHuggingFacePath(requireString(input.filename, "filename", 500))];
@@ -2325,11 +2718,29 @@ function sanitizeMessages(value: unknown): ChatMessage[] {
     const message = requireObject<Record<string, unknown>>(entry);
     const role = requireString(message.role, "messages.role", 40);
     if (role !== "system" && role !== "user" && role !== "assistant") throw httpError(400, `Invalid message role: ${role}`);
-    return {
-      role,
-      content: requireString(message.content, "messages.content", MAX_MESSAGE_CHARS)
-    };
+    
+    let content = "";
+    if (role === "system") {
+      if (typeof message.content !== "string") throw httpError(400, "messages.content must be a string.");
+      if (message.content.length > MAX_MESSAGE_CHARS) throw httpError(400, "messages.content is too long.");
+      content = message.content;
+    } else {
+      content = requireString(message.content, "messages.content", MAX_MESSAGE_CHARS);
+    }
+
+    return { role, content };
   });
+}
+
+function applyBilingualSystemPromptGuard(messages: ChatMessage[]): ChatMessage[] {
+  const hasSystem = messages.some((m) => m.role === "system");
+  if (hasSystem) {
+    return messages;
+  }
+  return [
+    { role: "system", content: "You are a helpful assistant. Always respond strictly in English." },
+    ...messages
+  ];
 }
 
 function sanitizePatterns(value: unknown): string[] {
@@ -2413,7 +2824,10 @@ function applySecurityHeaders(request: http.IncomingMessage, response: http.Serv
     response.setHeader("access-control-allow-origin", origin);
     response.setHeader("vary", "origin");
     response.setHeader("access-control-allow-methods", "GET,POST,PUT,OPTIONS");
-    response.setHeader("access-control-allow-headers", `content-type, ${PRIVILEGED_CONFIRM_HEADER}`);
+    response.setHeader(
+      "access-control-allow-headers",
+      `content-type, ${PRIVILEGED_CONFIRM_HEADER_MARKETPLACE}, ${PRIVILEGED_CONFIRM_HEADER_STUDIO}`
+    );
   }
   response.setHeader("x-content-type-options", "nosniff");
 }
@@ -2428,14 +2842,30 @@ export function isAllowedLocalOrigin(origin: string, configured: string[]) {
   }
 }
 
+function isSlidingAppPortOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "::1";
+    if (!isLoopback) return false;
+    const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === "https:" ? 443 : 80);
+    return port >= 3000 && port <= 3010;
+  } catch {
+    return false;
+  }
+}
+
 export function isConfiguredOrigin(origin: string, configured: string[]) {
-  if (configured.includes("*")) return true;
   const normalizedOrigin = normalizeOrigin(origin);
-  return configured.some((entry) => normalizeOrigin(entry) === normalizedOrigin);
+  return (
+    configured.some((entry) => entry !== "*" && normalizeOrigin(entry) === normalizedOrigin) ||
+    isSlidingAppPortOrigin(origin)
+  );
 }
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const PRIVILEGED_CONFIRM_HEADER = "x-ht-marketplace-confirm";
+const PRIVILEGED_CONFIRM_HEADER_MARKETPLACE = "x-ht-marketplace-confirm";
+const PRIVILEGED_CONFIRM_HEADER_STUDIO = "x-ht-studio-confirm";
+const PRIVILEGED_CONFIRM_HEADER = PRIVILEGED_CONFIRM_HEADER_MARKETPLACE;
 const PRIVILEGED_CONFIRM_VALUE = "privileged-action";
 
 interface GuardConfig {
@@ -2453,7 +2883,6 @@ interface GuardConfig {
  */
 export function isLoopbackHost(hostHeader: string | undefined, config: GuardConfig): boolean {
   if (!hostHeader) return false;
-  if (config.allowedOrigins.includes("*")) return true;
   const hostname = hostHeader
     .replace(/:\d+$/, "")
     .toLowerCase()
@@ -2497,23 +2926,43 @@ export function evaluatePrivilegedActionGuard(
   if (input.origin && !isConfiguredOrigin(input.origin, config.allowedOrigins)) {
     return { ok: false, status: 403, reason: "Refusing privileged request: Origin is not configured." };
   }
-  const confirmation = input.headers?.[PRIVILEGED_CONFIRM_HEADER];
-  const confirmed = Array.isArray(confirmation)
-    ? confirmation.includes(PRIVILEGED_CONFIRM_VALUE)
-    : confirmation === PRIVILEGED_CONFIRM_VALUE;
+  const confirmation1 = input.headers?.[PRIVILEGED_CONFIRM_HEADER_MARKETPLACE];
+  const confirmation2 = input.headers?.[PRIVILEGED_CONFIRM_HEADER_STUDIO];
+  const checkValue = (val: unknown) =>
+    Array.isArray(val) ? val.includes(PRIVILEGED_CONFIRM_VALUE) : val === PRIVILEGED_CONFIRM_VALUE;
+  const confirmed = checkValue(confirmation1) || checkValue(confirmation2);
   if (!confirmed) {
-    return { ok: false, status: 403, reason: `Refusing privileged request: missing ${PRIVILEGED_CONFIRM_HEADER}.` };
+    return {
+      ok: false,
+      status: 403,
+      reason: `Refusing privileged request: missing ${PRIVILEGED_CONFIRM_HEADER_MARKETPLACE} or ${PRIVILEGED_CONFIRM_HEADER_STUDIO}.`
+    };
   }
   return { ok: true };
 }
 
 function isPrivilegedRoute(method: string, pathname: string) {
-  if (method.toUpperCase() !== "POST") return false;
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod === "PUT" && pathname === "/api/engine/config") return true;
+  if (normalizedMethod !== "POST") return false;
   return (
+    pathname === "/api/downloads" ||
+    /^\/api\/downloads\/[^/]+\/(?:pause|resume|cancel)$/.test(pathname) ||
+    pathname === "/api/models/index/refresh" ||
+    pathname === "/api/engine/hot-pool/warm" ||
+    pathname === "/api/engine/server/install" ||
+    pathname === "/api/engine/server/start" ||
+    pathname === "/api/engine/server/stop" ||
+    pathname === "/api/engine/server/pool/warm" ||
+    pathname === "/api/engine/server/pool/stop" ||
+    pathname === "/api/runtimes/evict-all" ||
     pathname === "/api/runtimes/install" ||
     pathname === "/api/runtimes/ollama/server/start" ||
     pathname === "/api/runtimes/lmstudio/server/start" ||
+    pathname === "/api/runtimes/llamacpp/load" ||
+    pathname === "/api/runtimes/llamacpp/unload" ||
     pathname === "/api/engine/upgrade" ||
+    /^\/api\/runtimes\/[^/]+\/(?:load|unload)$/.test(pathname) ||
     /^\/api\/artifacts\/[^/]+\/reveal$/.test(pathname) ||
     /^\/api\/delete-plans\/[^/]+\/confirm$/.test(pathname)
   );

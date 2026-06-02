@@ -2,18 +2,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export type ModelTrustLevel = "owned" | "configured" | "installed-runtime" | "ambient" | "virtual";
+
 export interface DiscoveredModel {
   name: string;
   path: string;
   sizeBytes: number;
   source: string;
   dir: string;
+  trustLevel?: ModelTrustLevel;
+  autoWarmEligible?: boolean;
+  trustReason?: string;
+  license?: string;
 }
 
 export interface ModelRoot {
   dir: string;
   source: string;
   maxDepth?: number;
+  trustLevel?: ModelTrustLevel;
+  autoWarmEligible?: boolean;
+  trustReason?: string;
 }
 
 export interface ModelRootInput {
@@ -30,27 +39,30 @@ export interface ModelRootInput {
 export function defaultModelRoots(input: ModelRootInput = {}): ModelRoot[] {
   const home = os.homedir();
   const roots: ModelRoot[] = [];
-  if (input.modelsDir) roots.push({ dir: input.modelsDir, source: "marketplace" });
-  if (input.downloadsDir) roots.push({ dir: input.downloadsDir, source: "marketplace" });
+  if (input.modelsDir) roots.push(ownedRoot(input.modelsDir, "marketplace"));
+  if (input.downloadsDir) roots.push(ownedRoot(input.downloadsDir, "marketplace"));
   
   // LM Studio
-  roots.push({ dir: path.join(home, ".lmstudio", "models"), source: "LM Studio" });
-  roots.push({ dir: path.join(home, ".cache", "lm-studio", "models"), source: "LM Studio" });
-  roots.push({ dir: path.join(home, ".lmstudio", ".internal", "bundled-models"), source: "LM Studio (Bundled)" });
+  roots.push(installedRuntimeRoot(path.join(home, ".lmstudio", "models"), "LM Studio"));
+  roots.push(installedRuntimeRoot(path.join(home, ".cache", "lm-studio", "models"), "LM Studio"));
+  roots.push(installedRuntimeRoot(path.join(home, ".lmstudio", ".internal", "bundled-models"), "LM Studio (Bundled)"));
 
   // Jan & AnythingLLM
-  roots.push({ dir: path.join(home, "jan", "models"), source: "Jan" });
-  roots.push({ dir: path.join(home, "AppData", "Local", "jan", "models"), source: "Jan" });
-  roots.push({ dir: path.join(home, "AppData", "Roaming", "anythingllm-desktop", "storage", "models"), source: "AnythingLLM" });
+  roots.push(ambientRoot(path.join(home, "jan", "models"), "Jan", "Jan models are visible for manual loading until HT Studio has a Jan runtime readiness adapter."));
+  roots.push(ambientRoot(path.join(home, "AppData", "Local", "jan", "models"), "Jan", "Jan models are visible for manual loading until HT Studio has a Jan runtime readiness adapter."));
+  roots.push(ambientRoot(path.join(home, "AppData", "Roaming", "anythingllm-desktop", "storage", "models"), "AnythingLLM", "AnythingLLM models are visible for manual loading until HT Studio has an AnythingLLM runtime readiness adapter."));
 
   // Hugging Face Cache
-  roots.push({ dir: path.join(home, ".cache", "huggingface", "hub"), source: "Hugging Face Cache" });
+  roots.push(ambientRoot(path.join(home, ".cache", "huggingface", "hub"), "Hugging Face Cache", "Cached Hugging Face files are not auto-warmed until installed through HT Studio or added as an explicit model directory."));
 
   // Custom HT LLM Research
   try {
     const researchPath = path.join(home, "Desktop", "ht- llm research");
     if (fs.existsSync(researchPath)) {
-      roots.push({ dir: researchPath, source: "HT LLM Research", maxDepth: 10 });
+      roots.push({
+        ...ambientRoot(researchPath, "HT LLM Research", "Reference research workspace models are visible for manual loading but excluded from automatic residency."),
+        maxDepth: 10
+      });
     }
   } catch {
     // Ignore error
@@ -60,7 +72,10 @@ export function defaultModelRoots(input: ModelRootInput = {}): ModelRoot[] {
   try {
     const downloadsPath = path.join(home, "Downloads");
     if (fs.existsSync(downloadsPath)) {
-      roots.push({ dir: downloadsPath, source: "Downloads", maxDepth: 2 });
+      roots.push({
+        ...ambientRoot(downloadsPath, "Downloads", "Downloads is a broad filesystem discovery root, so models found there require manual loading or explicit configuration."),
+        maxDepth: 2
+      });
     }
   } catch {
     // Ignore error
@@ -68,7 +83,10 @@ export function defaultModelRoots(input: ModelRootInput = {}): ModelRoot[] {
   try {
     const desktopPath = path.join(home, "Desktop");
     if (fs.existsSync(desktopPath)) {
-      roots.push({ dir: desktopPath, source: "Desktop", maxDepth: 2 });
+      roots.push({
+        ...ambientRoot(desktopPath, "Desktop", "Desktop is a broad filesystem discovery root, so models found there require manual loading or explicit configuration."),
+        maxDepth: 2
+      });
     }
   } catch {
     // Ignore error
@@ -88,7 +106,7 @@ export function defaultModelRoots(input: ModelRootInput = {}): ModelRoot[] {
     for (const cand of customRoots) {
       try {
         if (fs.existsSync(cand)) {
-          roots.push({ dir: cand, source: `Drive ${drive.toUpperCase()}` });
+          roots.push(ambientRoot(cand, `Drive ${drive.toUpperCase()}`, "Drive-level model roots are broad discoveries and are not auto-warmed without explicit configuration."));
         }
       } catch {
         // drive not mounted or inaccessible
@@ -97,7 +115,7 @@ export function defaultModelRoots(input: ModelRootInput = {}): ModelRoot[] {
   }
 
   for (const extra of input.extraDirs ?? []) {
-    if (extra) roots.push({ dir: extra, source: "folder" });
+    if (extra) roots.push(configuredRoot(extra));
   }
   return roots;
 }
@@ -142,7 +160,7 @@ export function discoverGgufModels(roots: ModelRoot[], options: { maxDepth?: num
   const seen = new Set<string>();
   const found: DiscoveredModel[] = [];
 
-  const walk = (dir: string, source: string, depth: number, currentMaxDepth: number): void => {
+  const walk = (root: ModelRoot, dir: string, depth: number, currentMaxDepth: number): void => {
     if (depth > currentMaxDepth || found.length >= maxFiles) return;
     let entries: fs.Dirent[];
     try {
@@ -156,7 +174,7 @@ export function discoverGgufModels(roots: ModelRoot[], options: { maxDepth?: num
       if (entry.isDirectory()) {
         const lowerName = entry.name.toLowerCase();
         if (entry.name.startsWith(".") || EXCLUDED_DIRS.has(lowerName)) continue;
-        walk(full, source, depth + 1, currentMaxDepth);
+        walk(root, full, depth + 1, currentMaxDepth);
         continue;
       }
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".gguf")) continue;
@@ -177,89 +195,164 @@ export function discoverGgufModels(roots: ModelRoot[], options: { maxDepth?: num
         name: entry.name.replace(/(-\d{5}-of-\d{5})?\.gguf$/i, ""),
         path: full,
         sizeBytes,
-        source,
-        dir: path.basename(path.dirname(full))
+        source: root.source,
+        dir: path.basename(path.dirname(full)),
+        trustLevel: root.trustLevel ?? "ambient",
+        autoWarmEligible: root.autoWarmEligible === true,
+        trustReason: root.trustReason ?? defaultTrustReason(root.trustLevel ?? "ambient", root.source)
       });
     }
   };
 
   for (const root of roots) {
     if (found.length >= maxFiles) break;
-    walk(root.dir, root.source, 0, root.maxDepth ?? maxDepth);
+    walk(root, root.dir, 0, root.maxDepth ?? maxDepth);
   }
 
   // Ollama offline manifests scan
   const home = os.homedir();
   const ollamaModelsEnv = process.env.OLLAMA_MODELS;
-  const ollamaManifestsDir = ollamaModelsEnv
-    ? path.join(ollamaModelsEnv, "manifests")
-    : path.join(home, ".ollama", "models", "manifests");
-  const ollamaBlobsDir = ollamaModelsEnv
-    ? path.join(ollamaModelsEnv, "blobs")
-    : path.join(home, ".ollama", "models", "blobs");
+  
+  const ollamaRoots: Array<{ manifests: string; blobs: string }> = [];
+  if (ollamaModelsEnv) {
+    ollamaRoots.push({
+      manifests: path.join(ollamaModelsEnv, "manifests"),
+      blobs: path.join(ollamaModelsEnv, "blobs")
+    });
+  } else {
+    ollamaRoots.push({
+      manifests: path.join(home, ".ollama", "models", "manifests"),
+      blobs: path.join(home, ".ollama", "models", "blobs")
+    });
+    // Windows service default locations
+    if (process.platform === "win32") {
+      ollamaRoots.push({
+        manifests: "C:\\Windows\\system32\\config\\systemprofile\\.ollama\\models\\manifests",
+        blobs: "C:\\Windows\\system32\\config\\systemprofile\\.ollama\\models\\blobs"
+      });
+      ollamaRoots.push({
+        manifests: "C:\\ProgramData\\ollama\\models\\manifests",
+        blobs: "C:\\ProgramData\\ollama\\models\\blobs"
+      });
+    }
+  }
 
-  if (!options.skipOllama && fs.existsSync(ollamaManifestsDir)) {
-    const walkOllama = (dir: string): void => {
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walkOllama(full);
-          continue;
+  if (!options.skipOllama) {
+    for (const ollamaRoot of ollamaRoots) {
+      if (!fs.existsSync(ollamaRoot.manifests)) continue;
+      const walkOllama = (dir: string): void => {
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
         }
-        if (entry.isFile()) {
-          try {
-            const relative = path.relative(ollamaManifestsDir, full);
-            const parts = relative.split(path.sep);
-            let modelName = parts.join("/");
-            if (parts.length >= 4 && parts[0] === "registry.ollama.ai" && parts[1] === "library") {
-              modelName = parts.slice(2).join(":");
-            } else if (parts.length >= 2) {
-              modelName = parts.join(":");
-            }
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            walkOllama(full);
+            continue;
+          }
+          if (entry.isFile()) {
+            try {
+              const relative = path.relative(ollamaRoot.manifests, full);
+              const parts = relative.split(path.sep);
+              let modelName = parts.join("/");
+              if (parts.length >= 4 && parts[0] === "registry.ollama.ai" && parts[1] === "library") {
+                modelName = parts.slice(2).join(":");
+              } else if (parts.length >= 2) {
+                modelName = parts.join(":");
+              }
 
-            const manifest = JSON.parse(fs.readFileSync(full, "utf8"));
-            const modelLayer = manifest.layers?.find(
-              (l: any) => l.mediaType === "application/vnd.ollama.image.model"
-            );
-            if (modelLayer?.digest) {
-              const blobName = modelLayer.digest.replace(":", "-");
-              const blobPath = path.join(ollamaBlobsDir, blobName);
-              if (fs.existsSync(blobPath) && hasGgufMagic(blobPath)) {
-                let sizeBytes = 0;
-                try {
-                  sizeBytes = fs.statSync(blobPath).size;
-                } catch {
-                  sizeBytes = modelLayer.size || 0;
-                }
-                const resolvedBlob = realResolve(blobPath);
-                if (!seen.has(resolvedBlob)) {
-                  seen.add(resolvedBlob);
-                  found.push({
-                    name: modelName,
-                    path: blobPath,
-                    sizeBytes,
-                    source: "Ollama",
-                    dir: "ollama-blobs"
-                  });
+              const manifest = JSON.parse(fs.readFileSync(full, "utf8"));
+              const modelLayer = manifest.layers?.find(
+                (l: any) => l.mediaType === "application/vnd.ollama.image.model"
+              );
+              if (modelLayer?.digest) {
+                const blobName = modelLayer.digest.replace(":", "-");
+                const blobPath = path.join(ollamaRoot.blobs, blobName);
+                if (fs.existsSync(blobPath) && hasGgufMagic(blobPath)) {
+                  let sizeBytes = 0;
+                  try {
+                    sizeBytes = fs.statSync(blobPath).size;
+                  } catch {
+                    sizeBytes = modelLayer.size || 0;
+                  }
+                  const resolvedBlob = realResolve(blobPath);
+                  if (!seen.has(resolvedBlob)) {
+                    seen.add(resolvedBlob);
+                    found.push({
+                      name: modelName,
+                      path: blobPath,
+                      sizeBytes,
+                      source: "Ollama",
+                      dir: "ollama-blobs",
+                      trustLevel: "installed-runtime",
+                      autoWarmEligible: true,
+                      trustReason: "Installed Ollama model discovered from the configured Ollama model store."
+                    });
+                  }
                 }
               }
+            } catch {
+              // skip invalid manifests
             }
-          } catch {
-            // skip invalid manifests
           }
         }
-      }
-    };
-    walkOllama(ollamaManifestsDir);
+      };
+      walkOllama(ollamaRoot.manifests);
+    }
   }
 
   return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function ownedRoot(dir: string, source: string): ModelRoot {
+  return {
+    dir,
+    source,
+    trustLevel: "owned",
+    autoWarmEligible: true,
+    trustReason: "Model is inside HT Studio-managed storage."
+  };
+}
+
+function configuredRoot(dir: string): ModelRoot {
+  return {
+    dir,
+    source: "Configured Folder",
+    trustLevel: "configured",
+    autoWarmEligible: true,
+    trustReason: "Model root was explicitly configured."
+  };
+}
+
+function installedRuntimeRoot(dir: string, source: string): ModelRoot {
+  return {
+    dir,
+    source,
+    trustLevel: "installed-runtime",
+    autoWarmEligible: true,
+    trustReason: `${source} is an installed local runtime/model manager root.`
+  };
+}
+
+function ambientRoot(dir: string, source: string, trustReason: string): ModelRoot {
+  return {
+    dir,
+    source,
+    trustLevel: "ambient",
+    autoWarmEligible: false,
+    trustReason
+  };
+}
+
+function defaultTrustReason(trustLevel: ModelTrustLevel, source: string) {
+  if (trustLevel === "owned") return "Model is inside HT Studio-managed storage.";
+  if (trustLevel === "configured") return "Model root was explicitly configured.";
+  if (trustLevel === "installed-runtime") return `${source} is an installed local runtime/model manager root.`;
+  if (trustLevel === "virtual") return "Virtual model is provided by HT Studio.";
+  return `${source} is a broad discovery source and is manual-only until explicitly configured.`;
 }
 
 function hasGgufMagic(filePath: string): boolean {

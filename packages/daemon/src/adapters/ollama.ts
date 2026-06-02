@@ -175,6 +175,17 @@ export class OllamaAdapter {
     });
   }
 
+  async unload(model: string) {
+    try {
+      await this.fetchJson("/api/chat", {
+        method: "POST",
+        body: JSON.stringify({ model, messages: [], keep_alive: 0 })
+      });
+    } catch {
+      // Fallback or ignore empty message validation errors
+    }
+  }
+
   async chat(body: unknown, options?: { signal?: AbortSignal }) {
     const response = await fetchWithTimeout(`${this.options.host}/api/chat`, {
       method: "POST",

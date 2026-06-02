@@ -48,9 +48,10 @@ export function planResidency(
   const memory = memorySnapshotFromSystemScan(scan);
   const maxModels = maxModelsForMode(config);
   const hotNames = new Set(currentHotEntries.filter((entry) => entry.state === "ready").map((entry) => normalize(entry.model)));
-  const eligible = models
-    .filter((model) => model.runnable && !model.path.startsWith("virtual:") && model.sizeBytes <= config.hotPool.maxModelBytes)
+  const candidates = models
+    .filter((model) => model.runnable && !model.path.startsWith("virtual:"))
     .map((model) => candidateForModel(model, config, memory, hotNames));
+  const eligible = candidates.filter((candidate) => candidate.eligible);
 
   const ordered = orderCandidates(eligible, config.residencyMode);
   const selected: EngineResidencyCandidate[] = [];
@@ -72,13 +73,16 @@ export function planResidency(
     .filter((entry) => entry.state === "ready" && !selectedNames.has(normalize(entry.model)))
     .map((entry) => hotEntryToCandidate(entry, config, memory));
   const selectedIds = new Set(selected.map((candidate) => candidate.model.id));
-  const skipped = eligible
+  const skipped = candidates
     .filter((candidate) => !selectedIds.has(candidate.model.id))
     .map((candidate) => ({
       ...candidate,
       action: "skip" as const,
       willFit: false,
-      reason: selected.length >= maxModels ? `Skipped because ${config.residencyMode} selected ${maxModels} model(s).` : candidate.reason
+      reason:
+        candidate.eligible && selected.length >= maxModels
+          ? `Skipped because ${config.residencyMode} selected ${maxModels} model(s).`
+          : candidate.reason
     }));
 
   return {
@@ -110,16 +114,44 @@ function candidateForModel(
 ): EngineResidencyCandidate {
   const estimatedVramBytes = estimateVramBytes(model, config);
   const estimatedRamBytes = estimateRamBytes(model, config);
-  const willFit = candidateFits({ estimatedVramBytes, estimatedRamBytes } as EngineResidencyCandidate, memory, estimatedVramBytes, estimatedRamBytes);
+  const trustEligible = isAutoResidencyEligible(model);
+  const sizeEligible = model.sizeBytes <= config.hotPool.maxModelBytes;
+  const eligible = trustEligible && sizeEligible;
+  const memoryFit = candidateFits({ estimatedVramBytes, estimatedRamBytes } as EngineResidencyCandidate, memory, estimatedVramBytes, estimatedRamBytes);
+  const reason = candidateReason(model, config, trustEligible, sizeEligible, memoryFit);
   return {
     model,
     estimatedRamBytes,
     estimatedVramBytes,
-    eligible: true,
-    willFit,
+    eligible,
+    willFit: eligible && memoryFit,
     action: hotNames.has(normalize(model.name)) ? "keep-hot" : "promote",
-    reason: willFit ? "Estimated to fit within the current residency budget." : "Estimated model residency exceeds the current memory budget."
+    reason
   };
+}
+
+function isAutoResidencyEligible(model: ModelIndexEntry) {
+  if (model.autoWarmEligible === false || model.trustLevel === "ambient") return false;
+  return true;
+}
+
+function candidateReason(
+  model: ModelIndexEntry,
+  config: EngineRuntimeConfig,
+  trustEligible: boolean,
+  sizeEligible: boolean,
+  memoryFit: boolean
+) {
+  if (!trustEligible) {
+    return (
+      model.trustReason ||
+      `Skipped because ${model.source} is a broad discovery source. Add the model root to HT_STUDIO_MODEL_DIRS or install it through HT Studio to enable automatic residency.`
+    );
+  }
+  if (!sizeEligible) {
+    return `Skipped because model size exceeds the hot-pool max of ${config.hotPool.maxModelBytes} bytes.`;
+  }
+  return memoryFit ? "Estimated to fit within the current residency budget." : "Estimated model residency exceeds the current memory budget.";
 }
 
 function hotEntryToCandidate(

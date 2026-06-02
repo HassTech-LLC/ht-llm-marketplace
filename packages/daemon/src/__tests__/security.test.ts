@@ -16,9 +16,12 @@ describe("isLoopbackHost", () => {
     expect(isLoopbackHost(undefined, config)).toBe(false);
   });
 
-  it("accepts a configured non-loopback host and the wildcard escape hatch", () => {
+  it("accepts a configured non-loopback host", () => {
     expect(isLoopbackHost("192.168.1.5:3001", { host: "192.168.1.5", allowedOrigins: [] })).toBe(true);
-    expect(isLoopbackHost("anything.com", { host: "127.0.0.1", allowedOrigins: ["*"] })).toBe(true);
+  });
+
+  it("does not let wildcard origins bypass the host guard", () => {
+    expect(isLoopbackHost("anything.com", { host: "127.0.0.1", allowedOrigins: ["*"] })).toBe(false);
   });
 });
 
@@ -37,6 +40,10 @@ describe("isConfiguredOrigin", () => {
   it("only allows exact configured origins for state-changing browser requests", () => {
     expect(isConfiguredOrigin("http://127.0.0.1:3000", config.allowedOrigins)).toBe(true);
     expect(isConfiguredOrigin("http://127.0.0.1:8123", config.allowedOrigins)).toBe(false);
+  });
+
+  it("does not treat wildcard as a configured origin for state-changing requests", () => {
+    expect(isConfiguredOrigin("https://evil.com", ["*"])).toBe(false);
   });
 });
 
@@ -60,6 +67,14 @@ describe("evaluateGuard", () => {
     expect(evaluateGuard({ method: "POST", host: "127.0.0.1:3001" }, config).ok).toBe(true);
   });
 
+  it("does not let wildcard origins allow remote browser writes", () => {
+    const result = evaluateGuard(
+      { method: "POST", host: "127.0.0.1:3001", origin: "https://evil.com" },
+      { host: "127.0.0.1", allowedOrigins: ["*"] }
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("does not apply the Origin rule to GETs (widget assets, reads)", () => {
     expect(evaluateGuard({ method: "GET", host: "127.0.0.1:3001", origin: "https://evil.com" }, config).ok).toBe(true);
   });
@@ -79,7 +94,7 @@ describe("evaluatePrivilegedActionGuard", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("allows confirmed command-style endpoints from configured origins", () => {
+  it("allows confirmed command-style endpoints from configured origins using marketplace confirmation", () => {
     const result = evaluatePrivilegedActionGuard(
       {
         method: "POST",
@@ -92,14 +107,65 @@ describe("evaluatePrivilegedActionGuard", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("allows confirmed command-style endpoints from configured origins using studio confirmation", () => {
+    const result = evaluatePrivilegedActionGuard(
+      {
+        method: "POST",
+        pathname: "/api/engine/upgrade",
+        origin: "http://127.0.0.1:3000",
+        headers: { "x-ht-studio-confirm": "privileged-action" }
+      },
+      config
+    );
+    expect(result.ok).toBe(true);
+  });
+
   it("blocks confirmed command-style endpoints from arbitrary localhost origins", () => {
     const result = evaluatePrivilegedActionGuard(
       {
         method: "POST",
         pathname: "/api/runtimes/install",
         origin: "http://127.0.0.1:8123",
-        headers: { "x-ht-marketplace-confirm": "privileged-action" }
+        headers: { "x-ht-studio-confirm": "privileged-action" }
       },
+      config
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("does not let wildcard origins confirm privileged browser requests", () => {
+    const result = evaluatePrivilegedActionGuard(
+      {
+        method: "POST",
+        pathname: "/api/runtimes/install",
+        origin: "https://evil.com",
+        headers: { "x-ht-studio-confirm": "privileged-action" }
+      },
+      { host: "127.0.0.1", allowedOrigins: ["*"] }
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("requires confirmation for engine server and model-load command endpoints", () => {
+    for (const pathname of [
+      "/api/downloads",
+      "/api/engine/server/install",
+      "/api/engine/server/start",
+      "/api/engine/server/pool/warm",
+      "/api/runtimes/llamacpp/load",
+      "/api/runtimes/llamacpp/unload"
+    ]) {
+      const result = evaluatePrivilegedActionGuard(
+        { method: "POST", pathname, origin: "http://127.0.0.1:3000", headers: {} },
+        config
+      );
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("requires confirmation for runtime config updates", () => {
+    const result = evaluatePrivilegedActionGuard(
+      { method: "PUT", pathname: "/api/engine/config", origin: "http://127.0.0.1:3000", headers: {} },
       config
     );
     expect(result.ok).toBe(false);

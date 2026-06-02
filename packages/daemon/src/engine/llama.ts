@@ -174,9 +174,9 @@ export class LlamaEngine {
   }
 
   isLoaded(modelPath?: string): boolean {
-    if (this.isVirtualSSM) {
+    if (this.loadedPathValue?.startsWith("virtual:")) {
       if (!modelPath) return true;
-      return modelPath === "virtual:ternary-ssm-specialist";
+      return modelPath === this.loadedPathValue;
     }
     if (!this.session) return false;
     if (!modelPath) return true;
@@ -208,21 +208,21 @@ export class LlamaEngine {
   }
 
   async load(options: LoadModelOptions): Promise<{ loaded: string; gpu: string | false }> {
-    if (options.modelPath === "virtual:ternary-ssm-specialist") {
+    if (options.modelPath.startsWith("virtual:")) {
       const previousModel = this.model;
       this.model = undefined;
       this.session = undefined;
       this.context = undefined;
       this.draftContext = undefined;
       this.lastMessagesLength = 0;
-      this.isVirtualSSM = true;
+      this.isVirtualSSM = options.modelPath === "virtual:ternary-ssm-specialist";
       this.loadedPathValue = options.modelPath;
-      this.loadedName = options.displayName || "Ternary-SSM-Specialist";
+      this.loadedName = options.displayName || "Virtual-Model";
       this.systemPrompt = options.systemPrompt;
       this.contextSize = options.contextSize;
       this.threads = options.threads;
       if (previousModel) await disposeWithTimeout(previousModel);
-      return { loaded: this.loadedName, gpu: "Vulkan Virtual core" };
+      return { loaded: this.loadedName, gpu: options.modelPath.includes("ollama") ? "Ollama Fallback" : "Vulkan Virtual core" };
     }
 
     const module = await this.ensureModule();

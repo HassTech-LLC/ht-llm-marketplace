@@ -270,6 +270,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
   const [hotPool, setHotPool] = useState<HotPoolStatus | undefined>();
   const [residencyPlan, setResidencyPlan] = useState<EngineResidencyPlan | undefined>();
   const [systemScan, setSystemScan] = useState<SystemScan | undefined>();
+  const [customSystemPrompt, setCustomSystemPrompt] = useState<string | undefined>();
   const streamRef = useRef<HTMLDivElement>(null);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -656,6 +657,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         });
         rememberFailure(request.path, false);
         setPreferLoadedModel(true);
+        setCustomOllamaModel(undefined);
         setTurns([]);
       } catch (err) {
         rememberFailure(request.path, true);
@@ -927,6 +929,9 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     setGenerating(true);
     setError(undefined);
 
+    const systemPromptMessage = customSystemPrompt !== undefined ? [{ role: "system" as const, content: customSystemPrompt }] : [];
+    const historyPayload = [...systemPromptMessage, ...history];
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
     const startedAt = performance.now();
@@ -942,9 +947,9 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
               stream: true,
               keep_alive: STANDARD_KEEP_ALIVE,
               options: { num_ctx: STANDARD_CONTEXT, num_predict: maxTokens, temperature },
-              messages: history
+              messages: historyPayload
             }
-          : { runtime: "llamacpp", stream: true, messages: history, maxTokens, temperature };
+          : { runtime: "llamacpp", stream: true, messages: historyPayload, maxTokens, temperature };
       const response = await client.chat(request, { signal: controller.signal });
       if (!response.ok || !response.body) throw new Error(`Chat failed with ${response.status}`);
       const reader = response.body.getReader();
@@ -1046,7 +1051,8 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
     refreshStatus,
     shouldUseBackendStandardRoute,
     shouldUseOllamaModel,
-    temperature
+    temperature,
+    customSystemPrompt
   ]);
 
   const send = useCallback(async () => {
@@ -1368,18 +1374,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                       disabled={Boolean(busy) || readiness.level === "blocked"}
                       onClick={() => {
                         setQuery(model.name);
-                        if (model.source === "Ollama") {
-                          setCustomOllamaModel({
-                            id: model.name,
-                            name: model.name,
-                            displayName: model.name,
-                            runtime: "ollama"
-                          });
-                          setPreferLoadedModel(false);
-                          setOpen(false);
-                        } else {
-                          void load({ path: model.path }, model.name);
-                        }
+                        void load({ path: model.path }, model.name);
                       }}
                     >
                       <span className="run-option-main">
@@ -1619,6 +1614,26 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                 onChange={(e) => {
                   setRuntimeControlsDirty(true);
                   setHotPoolMaxGb(Math.min(20, Math.max(0.1, Number(e.target.value))));
+                }}
+              />
+            </label>
+            <label className="run-field run-field-wide">
+              <span>Custom system prompt (Leave empty for English safety constraint, or enter space/text to override)</span>
+              <textarea
+                placeholder="Enter custom system prompt, or leave empty for default English safety constraint"
+                value={customSystemPrompt || ""}
+                onChange={(e) => setCustomSystemPrompt(e.target.value)}
+                rows={3}
+                style={{
+                  width: "100%",
+                  background: "var(--ht-input-bg, rgba(20, 24, 30, 0.9))",
+                  border: "1px solid var(--ht-line)",
+                  color: "var(--ht-text)",
+                  borderRadius: "6px",
+                  padding: "8px 10px",
+                  font: "inherit",
+                  fontSize: "0.78rem",
+                  resize: "vertical"
                 }}
               />
             </label>

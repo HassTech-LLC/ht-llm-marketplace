@@ -45,9 +45,14 @@ export class HotModelPool {
     };
   }
 
-  async warm(models: ModelIndexEntry[], config: EngineRuntimeConfig, scan?: SystemScan): Promise<HotPoolStatus> {
+  async warm(
+    models: ModelIndexEntry[],
+    config: EngineRuntimeConfig,
+    scan?: SystemScan,
+    residencyPlan?: EngineResidencyPlan
+  ): Promise<HotPoolStatus> {
     if (!config.hotPool.enabled) return this.status(config);
-    this.lastPlan = planResidency(models, config, this.status(config).entries, scan);
+    this.lastPlan = residencyPlan ?? planResidency(models, config, this.status(config).entries, scan);
     if (config.residencyMode === "quality-single") {
       await this.unloadUnselected(this.lastPlan.selected.map((candidate) => candidate.model));
     }

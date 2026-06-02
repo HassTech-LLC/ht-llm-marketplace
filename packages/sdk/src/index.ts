@@ -217,6 +217,8 @@ export interface StartDownloadRequest {
   revision?: string;
   expectedBytes?: number;
   expectedFiles?: Array<{ path: string; sizeBytes?: number }>;
+  license?: string;
+  licenseAccepted?: boolean;
   /** For the "ollama-registry" source: an Ollama library reference, e.g. "qwen2.5:0.5b". */
   ref?: string;
   displayName?: string;
@@ -249,6 +251,8 @@ export interface EngineLoadRequest {
   draftModelPath?: string;
 }
 
+export type ModelTrustLevel = "owned" | "configured" | "installed-runtime" | "ambient" | "virtual";
+
 export interface DiscoveredModel {
   name: string;
   path: string;
@@ -256,6 +260,10 @@ export interface DiscoveredModel {
   source: string;
   dir: string;
   loaded?: boolean;
+  trustLevel?: ModelTrustLevel;
+  autoWarmEligible?: boolean;
+  trustReason?: string;
+  license?: string;
 }
 
 export interface ModelIndexEntry extends DiscoveredModel {
@@ -319,6 +327,42 @@ export interface QueueEntry {
   startedAt?: string;
   finishedAt?: string;
   error?: string;
+}
+
+export interface CompatibilityScorecard {
+  ok: boolean;
+  generatedAt: string;
+  readiness: {
+    ok: boolean;
+    mode: EngineRuntimeConfig["backend"];
+    blockers: string[];
+    warnings: string[];
+    recommendations: string[];
+    multiRuntimeVramResident?: {
+      active: boolean;
+      ollama: any[];
+      lmstudio: any[];
+      inprocess: any[];
+    };
+  };
+  endpoints: Record<string, boolean>;
+  standardRoute: StandardRouteDecision;
+  queue: QueueStatus;
+  runtime: {
+    backend: EngineRuntimeConfig["backend"];
+    residencyMode: RuntimeResidencyMode;
+    hotPoolEnabled: boolean;
+    delegatedServerEnabled: boolean;
+  };
+  trust: {
+    policy: string;
+    indexedPhysical: number;
+    automaticEligible: number;
+    ambientDiscovered: number;
+    skippedAmbient: number;
+    levels: Record<ModelTrustLevel, number>;
+  };
+  recommendations: string[];
 }
 
 export type RuntimeResidencyMode = "balanced" | "fast-parallel" | "quality-single";
@@ -552,6 +596,48 @@ export interface EngineChatRequest {
   temperature?: number;
 }
 
+export let activeLockfileUrl: string | undefined = undefined;
+
+export async function resolveActiveLockfileUrl(): Promise<string | undefined> {
+  try {
+    const fsName = "node:fs";
+    const pathName = "node:path";
+    const osName = "node:os";
+    const fs = await import(fsName);
+    const path = await import(pathName);
+    const os = await import(osName);
+
+    const home = process.env.HT_MARKETPLACE_HOME || process.env.HT_STUDIO_HOME;
+    const localAppData = process.env.LOCALAPPDATA;
+    const userHome = process.env.USERPROFILE || os.homedir() || "";
+    
+    const storageDirMarketplace = home || (localAppData ? path.join(localAppData, "HT LLM Marketplace") : path.join(userHome, "AppData", "Local", "HT LLM Marketplace"));
+    const storageDirStudio = home || (localAppData ? path.join(localAppData, "HT Studio") : path.join(userHome, "AppData", "Local", "HT Studio"));
+    
+    let lockfilePath = path.join(storageDirMarketplace, "active-daemon.json");
+    if (!fs.existsSync(lockfilePath)) {
+      lockfilePath = path.join(storageDirStudio, "active-daemon.json");
+    }
+    
+    if (fs.existsSync(lockfilePath)) {
+      const raw = fs.readFileSync(lockfilePath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed?.url) {
+        activeLockfileUrl = parsed.url;
+        return parsed.url;
+      }
+    }
+  } catch {
+    // Ignore dynamic resolution failures
+  }
+  activeLockfileUrl = undefined;
+  return undefined;
+}
+
+if (typeof process !== "undefined" && process.versions?.node) {
+  void resolveActiveLockfileUrl();
+}
+
 export interface MarketplaceClientOptions {
   apiUrl?: string;
   fetchImpl?: typeof fetch;
@@ -562,7 +648,7 @@ export class MarketplaceClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: MarketplaceClientOptions = {}) {
-    this.apiUrl = (options.apiUrl || "http://127.0.0.1:3001").replace(/\/$/, "");
+    this.apiUrl = (options.apiUrl || activeLockfileUrl || "http://127.0.0.1:3001").replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl || ((input, init) => fetch(input, init));
   }
 
@@ -641,6 +727,10 @@ export class MarketplaceClient {
     return this.post<{ ok: boolean; message: string }>(`/api/runtimes/${runtime}/unload`, { model });
   }
 
+  evictAllRuntimes() {
+    return this.post<{ ok: boolean; message: string; ollamaEvicted: string[]; lmstudioEvicted: string[] }>("/api/runtimes/evict-all", {});
+  }
+
   startLmStudioServer(port = 1234) {
     return this.post<{ ok: boolean; message: string }>("/api/runtimes/lmstudio/server/start", { port });
   }
@@ -680,6 +770,10 @@ export class MarketplaceClient {
 
   standardRoute() {
     return this.get<StandardRouteDecision>("/api/routing/standard");
+  }
+
+  compatibilityScorecard() {
+    return this.get<CompatibilityScorecard>("/api/compatibility/scorecard");
   }
 
   queueStatus() {
@@ -799,7 +893,11 @@ export class MarketplaceClient {
   private async post<T>(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<T> {
     const response = await this.fetchImpl(`${this.apiUrl}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ht-marketplace-confirm": "privileged-action" },
+      headers: { 
+        "content-type": "application/json", 
+        "x-ht-marketplace-confirm": "privileged-action",
+        "x-ht-studio-confirm": "privileged-action"
+      },
       body: JSON.stringify(body),
       signal: options?.signal
     });
@@ -809,7 +907,11 @@ export class MarketplaceClient {
   private async put<T>(path: string, body: unknown): Promise<T> {
     const response = await this.fetchImpl(`${this.apiUrl}${path}`, {
       method: "PUT",
-      headers: { "content-type": "application/json", "x-ht-marketplace-confirm": "privileged-action" },
+      headers: { 
+        "content-type": "application/json", 
+        "x-ht-marketplace-confirm": "privileged-action",
+        "x-ht-studio-confirm": "privileged-action"
+      },
       body: JSON.stringify(body)
     });
     return this.read<T>(response);

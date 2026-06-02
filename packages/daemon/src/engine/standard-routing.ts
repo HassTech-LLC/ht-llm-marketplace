@@ -20,14 +20,18 @@ export function chooseStandardModel(
 
   const healthy = candidates.filter((candidate) => candidate.healthy);
   const physical = healthy.filter((candidate) => !isVirtualModel(candidate.model));
-  const pool = physical.length > 0 ? physical : healthy;
+  const automaticPhysical = physical.filter((candidate) => isAutomaticRouteModel(candidate.model));
+  const automaticFallback = healthy.filter((candidate) => isAutomaticRouteModel(candidate.model));
+  const pool = automaticPhysical.length > 0 ? automaticPhysical : automaticFallback;
   const selected = pool[0]?.model ?? null;
 
   return {
     selected,
     reason: selected
       ? `Selected ${selected.name} as the fastest healthy standard-route model.`
-      : "All indexed models are currently failing benchmarks.",
+      : healthy.length > 0
+        ? "Runnable models are indexed, but none are trusted for automatic standard routing."
+        : "All indexed models are currently failing benchmarks.",
     candidates
   };
 }
@@ -85,6 +89,11 @@ function normalize(value: string) {
 
 function isVirtualModel(model: ModelIndexEntry) {
   return model.path.startsWith("virtual:") || model.source.toLowerCase().includes("virtual");
+}
+
+function isAutomaticRouteModel(model: ModelIndexEntry) {
+  if (model.autoWarmEligible === false || model.trustLevel === "ambient") return false;
+  return true;
 }
 
 function isChatModel(model: ModelIndexEntry) {
