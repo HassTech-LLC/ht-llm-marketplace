@@ -2,6 +2,23 @@
 
 HT Local LLM Marketplace is prepared for public GitHub and npm distribution under MIT. The repo root stays private in `package.json` because it is a workspace, while the publishable packages are marked public.
 
+For the public repository positioning, footprint language, topics, and proof-boundary rules, see [`github-repo-design.md`](github-repo-design.md).
+
+## Repository Footprint
+
+The source repo should stay light and reviewable. The latest local measurement used for public docs is:
+
+| Area | Size |
+| --- | ---: |
+| Tracked source | 229 files, about 1.42 MiB |
+| SDK package tarball | about 10.5 KB |
+| CLI package tarball | about 8.9 KB |
+| React package tarball | about 44 KB |
+| Web Component tarball | about 83.5 KB |
+| Daemon package tarball | about 128.6 KB |
+
+Do not describe downloaded models, local runtime caches, `node_modules`, `.git`, or Tauri `target` output as the package footprint. Those are local development or user-machine payloads, not the embeddable marketplace source.
+
 ## Install Vs Fork
 
 Install packages when you want to embed the marketplace in an existing app:
@@ -108,10 +125,11 @@ Hosts embedding this project should document their own telemetry, proxying, and 
 Before publishing packages:
 
 ```powershell
-npm run release:check
+npm run release:preflight
+npm run publish:dry-run
 ```
 
-The release check verifies typecheck, tests, builds, dry-pack contents, and an external tarball install smoke for:
+The release preflight verifies typecheck, tests, builds, dry-pack contents, browser smoke, installer smoke, clean-room consumer install, and an external tarball install smoke for:
 
 - `@ht-llm-marketplace/sdk`
 - `@ht-llm-marketplace/react`
@@ -122,6 +140,9 @@ The release check verifies typecheck, tests, builds, dry-pack contents, and an e
 The external smoke installs packed tarballs into `artifacts/package-smoke`, imports SDK/React package APIs, runs the CLI help command, and starts the daemon bin on a free loopback port.
 `npm run smoke:cli-marketplace` additionally verifies terminal catalog search, file listing, download listing, artifact verification, artifact reveal, artifact load, and project-target initialization against a fake daemon.
 `npm run smoke:universal` verifies the universal target matrix, auto-detection for representative host projects, and the sample snippets under `examples/universal`.
+`npm run smoke:consumer` creates a temporary consumer project outside the repo, installs the local release tarballs, starts the packaged daemon, verifies CLI initialization/status/profile commands, and checks the packaged Web Component widget route.
+
+The remaining launch-distribution work is tracked in [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md). Use that plan to close Docker proof, remote CI observation, release publishing, and clean-room consumer validation before calling the marketplace public-ready.
 
 ## Local Release Bundle
 
@@ -132,6 +153,12 @@ npm run bundle:local
 ```
 
 The bundle is written outside the repo by default and contains packed tarballs, `manifest.json`, PowerShell and POSIX install scripts, and a README. This is the cleanest way to hand the marketplace to another local project without committing generated artifacts.
+
+For a clean-room validation of that bundle path:
+
+```powershell
+npm run smoke:consumer
+```
 
 ## Contribution Workflow
 

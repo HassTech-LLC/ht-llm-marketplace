@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: "Publish npm packages after all gates pass"
+        required: true
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/desktop/package-lock.json
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install desktop dependencies
+        run: npm ci --prefix apps/desktop
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium --with-deps
+
+      - name: Release preflight
+        run: npm run release:preflight:ci
+
+      - name: Npm publish dry-run
+        run: npm run publish:dry-run
+
+      - name: Build local release bundle
+        run: npm run bundle:local -- --out="${RUNNER_TEMP}/htlm-release-bundle" --skip-build
+
+      - name: Upload local release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: htlm-release-bundle
+          path: ${{ runner.temp }}/htlm-release-bundle
+
+      - name: Publish npm packages
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm == true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --provenance --access public -w @ht-llm-marketplace/sdk
+          npm publish --provenance --access public -w @ht-llm-marketplace/react
+          npm publish --provenance --access public -w @ht-llm-marketplace/web-component
+          npm publish --provenance --access public -w @ht-llm-marketplace/daemon
+          npm publish --provenance --access public -w @ht-llm-marketplace/cli

@@ -1,13 +1,17 @@
 # HT Local LLM Marketplace
 
-[![CI](https://github.com/ht-llm-marketplace/ht-llm-marketplace/actions/workflows/ci.yml/badge.svg)](https://github.com/ht-llm-marketplace/ht-llm-marketplace/actions/workflows/ci.yml)
+[![CI](https://github.com/HassTech-LLC/ht-llm-marketplace/actions/workflows/ci.yml/badge.svg)](https://github.com/HassTech-LLC/ht-llm-marketplace/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D24-339933.svg)](package.json)
 [![Local-first](https://img.shields.io/badge/runtime-local--first-0f766e.svg)](docs/security-privacy.md)
+[![Embeddable](https://img.shields.io/badge/ui-React%20%2B%20Web%20Component-0ea5e9.svg)](docs/universal-integration.md)
+[![OpenAI compatible](https://img.shields.io/badge/API-OpenAI--compatible-111827.svg)](docs/agent-integration.md)
 
-HT Local LLM Marketplace is a local-first model marketplace and runtime control plane for apps that need private local models without becoming a full AI studio.
+HT Local LLM Marketplace is a lightweight local model supply chain: a marketplace UI, terminal lifecycle, and local runtime control plane that other apps can embed without becoming a full AI studio.
 
-It gives one system multiple entry points:
+It ships as a small TypeScript control plane and lets the user's machine own the heavy parts: model files, runtime state, downloads, verification, and delete plans stay local.
+
+## What It Gives Developers
 
 - A terminal marketplace for agents, CI, operators, and power users.
 - A local daemon with OpenAI-compatible and Ollama-compatible endpoints.
@@ -16,7 +20,7 @@ It gives one system multiple entry points:
 - A framework-neutral Web Component.
 - A full Studio for users who want peak runtime controls, hot pools, and managed `llama-server`.
 
-The practical goal: let any project discover, install, verify, load, run, and safely delete local model artifacts while keeping model state and runtime control on the user's machine.
+The practical goal: let any project discover, download, verify, load, run, and safely delete local model artifacts while keeping model state and runtime control on the user's machine.
 
 ## Why This Exists
 
@@ -32,6 +36,53 @@ It is intentionally split into surfaces:
 | Call a local model from any OpenAI-compatible client | `http://127.0.0.1:3001/v1` |
 | Build a custom product around model installs and runtime state | `@ht-llm-marketplace/sdk` |
 | Run the full local Studio with peak controls | `npm run studio` |
+
+## Size And Footprint
+
+The repo is meant to be small as source and package code, not to pretend local models are small. GGUF files, Ollama blobs, and desktop build outputs are intentionally outside the publishable control-plane footprint.
+
+| Layer | Current measured size | What it means |
+| --- | ---: | --- |
+| Tracked source | 229 files, 1.42 MiB | The GitHub repo stays compact and reviewable. |
+| `@ht-llm-marketplace/cli` tarball | ~8.9 KB | Terminal lifecycle wrapper. |
+| `@ht-llm-marketplace/sdk` tarball | ~10.5 KB | Typed API client and shared types. |
+| `@ht-llm-marketplace/react` tarball | ~44 KB | Embeddable React marketplace UI and CSS. |
+| `@ht-llm-marketplace/web-component` tarball | ~83.5 KB | Framework-neutral custom element bundle. |
+| `@ht-llm-marketplace/daemon` tarball | ~128.6 KB | Local daemon, adapters, download jobs, runtime routing, delete safety. |
+
+Large local folders such as `node_modules`, `.git`, Tauri `target`, desktop installers, downloaded models, and runtime caches are development or user-machine artifacts, not what a consuming app imports.
+
+## System Map
+
+| System | Tech | Comes with |
+| --- | --- | --- |
+| Local daemon | Node, TypeScript, loopback HTTP | `/health`, catalog search, downloads, inventory, runtime scan, safe delete plans, OpenAI-compatible routes. |
+| Runtime adapters | Ollama, LM Studio, llama.cpp, OpenAI-compatible endpoints | Detect installed runtimes, pull/download models, start optional connectors, configure external compatible endpoints. |
+| Managed engine path | llama.cpp / `node-llama-cpp`, managed `llama-server` support | Built-in local GGUF path, hot pools, residency modes, delegated server pool hooks. |
+| Terminal marketplace | `htlm` CLI | `status`, `targets`, `init`, `search`, `files`, `pull`, `downloads`, `inventory`, `verify`, `load`, `run`, `rm`. |
+| SDK | TypeScript ESM | Typed lifecycle calls for host apps and automation. |
+| React UI | React 18/19-compatible package | Full marketplace component with configurable branding, theme, feature flags, and download modes. |
+| Web Component | Vite-built custom element | Plain HTML/server-rendered embed for Django, Rails, Laravel, ASP.NET, CMS, Astro, Vue, Svelte, Electron, and Tauri hosts. |
+| Studio | Vite app | Full user surface for marketplace, library, runtimes, compatibility scan, and peak local controls. |
+| Desktop shell | Tauri scaffold | Windows desktop packaging path without committing heavy build output. |
+| Release proof | Vitest, TypeScript, Playwright, package and consumer smokes | Build, browser, terminal, universal-template, package, clean-room, Docker, and installer gates. |
+
+## Possible Product Shapes
+
+| Product using this repo | Smallest useful profile |
+| --- | --- |
+| Terminal-only local model manager | `@ht-llm-marketplace/cli` |
+| Hermes-style or coding agent backend | CLI plus `http://127.0.0.1:3001/v1` |
+| React SaaS/admin marketplace panel | `@ht-llm-marketplace/react` plus daemon |
+| Plain HTML or server-rendered app marketplace | Web Component plus daemon |
+| Python/FastAPI/Django local-AI app | Web Component plus OpenAI-compatible API |
+| IDE or VS Code extension | OpenAI-compatible API plus CLI lifecycle |
+| Desktop local AI app | React/Web Component plus daemon, or full Studio |
+| Power-user local Studio | Full repo or future desktop bundle |
+
+## GitHub Topics
+
+Suggested repository topics: `local-ai`, `llm`, `gguf`, `ollama`, `llama-cpp`, `openai-compatible`, `model-marketplace`, `web-component`, `react`, `typescript`, `local-first`, `ai-agents`, `desktop-ai`.
 
 ## Quick Start
 
@@ -174,6 +225,24 @@ print(urllib.request.urlopen(request).read().decode("utf-8"))
 ```
 
 More examples live in [`examples/universal`](examples/universal).
+
+## Visual Proof
+
+Marketplace desktop:
+
+![Marketplace desktop screenshot](docs/assets/marketplace-desktop.png)
+
+Marketplace mobile:
+
+![Marketplace mobile screenshot](docs/assets/marketplace-mobile.png)
+
+Terminal marketplace:
+
+![Terminal marketplace flow](docs/assets/terminal-marketplace.svg)
+
+Embeddable surfaces:
+
+![Marketplace embed surfaces](docs/assets/embed-surfaces.svg)
 
 ## Architecture
 

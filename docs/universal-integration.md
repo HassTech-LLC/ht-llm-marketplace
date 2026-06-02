@@ -66,7 +66,12 @@ htlm run <model> "hi"
 
 Universal samples live under `examples/universal`:
 
+- `README.md`
+- `node-terminal/chat.mjs`
+- `node-terminal/package.json`
 - `python/openai_chat.py`
+- `python/pyproject.toml`
+- `plain-html/index.html`
 - `django/templates/local_models.html`
 - `rails/app/views/local_models/index.html.erb`
 - `laravel/resources/views/local-models.blade.php`
@@ -97,4 +102,4 @@ npm run smoke:marketplace
 npm run release:check
 ```
 
-`smoke:universal` validates project detection, explicit target snippets, and the universal sample files. `release:check` includes the universal smoke so project-surface drift blocks release.
+`smoke:universal` validates project detection, explicit target snippets, sample files, and a runnable Node terminal starter against an OpenAI-compatible fake endpoint. `release:check` includes the universal smoke so project-surface drift blocks release.

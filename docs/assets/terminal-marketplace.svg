@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">HT Local LLM Marketplace terminal flow</title>
+  <desc id="desc">A terminal view showing marketplace status, model search, pull, verify, load, and run commands.</desc>
+  <rect width="1200" height="720" fill="#0b1220"/>
+  <rect x="60" y="56" width="1080" height="608" rx="18" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <circle cx="96" cy="92" r="9" fill="#ef4444"/>
+  <circle cx="124" cy="92" r="9" fill="#f59e0b"/>
+  <circle cx="152" cy="92" r="9" fill="#10b981"/>
+  <text x="190" y="99" fill="#cbd5e1" font-family="Consolas, Menlo, monospace" font-size="20">htlm terminal marketplace</text>
+  <g font-family="Consolas, Menlo, monospace" font-size="24">
+    <text x="96" y="162" fill="#38bdf8">$ htlm status</text>
+    <text x="126" y="202" fill="#e5e7eb">daemon: http://127.0.0.1:3001  runtime: ready</text>
+    <text x="96" y="272" fill="#38bdf8">$ htlm search "qwen coder"</text>
+    <text x="126" y="312" fill="#e5e7eb">1. Qwen2.5 Coder GGUF  source facts + license signal</text>
+    <text x="96" y="382" fill="#38bdf8">$ htlm pull qwen2.5:0.5b</text>
+    <text x="126" y="422" fill="#e5e7eb">downloaded, verified, manifest-owned</text>
+    <text x="96" y="492" fill="#38bdf8">$ htlm load artifact:qwen2.5-0.5b</text>
+    <text x="126" y="532" fill="#e5e7eb">loaded via standard route, OpenAI endpoint ready</text>
+    <text x="96" y="602" fill="#38bdf8">$ htlm run local "hi"</text>
+    <text x="126" y="642" fill="#e5e7eb">Hello. Local inference is running on this machine.</text>
+  </g>
+</svg>

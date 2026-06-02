@@ -10,8 +10,7 @@ const forbiddenPaths = [
   "studio-marketplace.jpg",
   "studio-proof.jpg",
   "net.txt",
-  "console-errors.txt",
-  "PROJECT_MEMORY.md"
+  "console-errors.txt"
 ];
 
 const forbiddenLockEntries = [

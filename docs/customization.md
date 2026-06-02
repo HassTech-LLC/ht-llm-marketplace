@@ -165,7 +165,7 @@ display: {
 storageKey: "acme_model_hub"
 ```
 
-`downloadMode` defaults to `simple`, which shows one recommended GGUF artifact in the download panel. If the only available choices are too heavy for the scanned GPU or cannot be scored confidently, Simple mode blocks the one-click install and asks the user to review Advanced options. Set it to `advanced` when your audience needs the full quantization matrix and every file variant visible by default.
+`downloadMode` defaults to `simple`, which shows one recommended GGUF artifact in the download panel. If the only available choices are too heavy for the scanned GPU or cannot be scored confidently, Simple mode blocks the direct install action and asks the user to review Advanced options. Set it to `advanced` when your audience needs the full quantization matrix and every file variant visible by default.
 
 Multipart GGUF repos are grouped as complete artifacts in both modes. Advanced mode should show one selectable artifact per quantization group, not individual `00001-of-00003` shards.
 

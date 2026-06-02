@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-const required = process.env.HT_DOCKER_SMOKE_REQUIRED === "1";
+const required = process.env.HT_DOCKER_SMOKE_REQUIRED === "1" || process.argv.includes("--required");
 const image = process.env.HT_DOCKER_SMOKE_IMAGE || "ht-llm-marketplace:smoke";
 
 if (!hasDocker()) {

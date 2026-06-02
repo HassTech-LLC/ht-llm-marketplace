@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "url": "git+https://github.com/HassTech-LLC/ht-llm-marketplace.git",
     "directory": "packages/daemon"
   },
   "keywords": [
@@ -19,7 +19,7 @@
     "huggingface"
   ],
   "bin": {
-    "htlm-daemon": "./dist/index.js"
+    "htlm-daemon": "dist/index.js"
   },
   "exports": {
     ".": {

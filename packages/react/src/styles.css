@@ -1006,6 +1006,35 @@
   gap: 10px;
 }
 
+.ht-runtime-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ht-runtime-action {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
+.ht-runtime-config {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--ht-line);
+  border-radius: 6px;
+  color: var(--ht-muted);
+  font-size: 12px;
+}
+
+.ht-runtime-config code {
+  color: var(--ht-cyan);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .ht-runtime-head,
 .ht-file,
 .ht-download {

@@ -17,36 +17,27 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/desktop/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run check
-
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Compatibility smoke
-        run: npm run check:compatibility
-
-      - name: Installer smoke
-        run: npm run smoke:installer
+      - name: Install desktop dependencies
+        run: npm ci --prefix apps/desktop
 
       - name: Install Playwright browser
         run: npx playwright install chromium --with-deps
 
+      - name: Full release gate
+        run: npm run release:check
+
       - name: Studio smoke
         run: npm run smoke:studio
 
-      - name: Verify package contents
-        run: npm run pack:dry-run
+      - name: Installer smoke
+        run: npm run smoke:installer
 
-      - name: Smoke packed packages
-        run: npm run smoke:packages
-
-      - name: Check generated artifact cleanliness
-        run: npm run check:artifacts
+      - name: Docker smoke
+        run: npm run smoke:docker:required

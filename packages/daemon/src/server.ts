@@ -375,7 +375,7 @@ export function createServer(context: RuntimeContext) {
         if (!isWin) {
           return json(response, {
             ok: false,
-            error: `One-click install is only fully automated on Windows (via winget) in this version. On macOS/Linux, please run: ${
+            error: `Optional runtime install is only fully automated on Windows (via winget) in this version. On macOS/Linux, please run: ${
               runtime === "ollama" ? "curl -fsSL https://ollama.com/install.sh | sh" : "brew install --cask lm-studio"
             }`
           }, 400);
@@ -393,7 +393,7 @@ export function createServer(context: RuntimeContext) {
 
         return json(response, {
           ok: true,
-          message: `One-click installation for ${runtime} (${wingetId}) started in the background.`
+          message: `Optional runtime installation for ${runtime} (${wingetId}) started in the background.`
         });
       }
 

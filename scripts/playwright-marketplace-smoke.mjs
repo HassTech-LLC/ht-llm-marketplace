@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 
 const attachOnly = process.env.HT_STUDIO_ATTACH_ONLY === "1";
+const writeDocAssets = process.argv.includes("--docs-assets") || process.env.HT_WRITE_DOC_ASSETS === "1";
 const apiPort = process.env.HT_STUDIO_API_PORT || (!attachOnly ? String(await freePort()) : "3001");
 const studioPort = process.env.HT_STUDIO_PORT || (!attachOnly ? String(await freePort()) : "3000");
 const apiUrl = process.env.HT_STUDIO_API_URL || `http://127.0.0.1:${apiPort}`;
@@ -52,6 +53,7 @@ try {
     await page.getByText("Template status").waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Local fit" }).click();
     await page.getByText("GPU diagnostics").waitFor({ timeout: 10_000 });
+    if (writeDocAssets) await captureDocAsset(page, "marketplace-desktop.png");
 
     await page.getByRole("button", { name: "View Settings" }).click();
     await page.getByRole("button", { name: "Advanced", exact: true }).click();
@@ -71,6 +73,17 @@ try {
     const found = forbidden.filter((text) => bodyText.includes(text));
     if (found.length) throw new Error(`Marketplace still renders forbidden audit text: ${found.join(", ")}`);
 
+    await page.getByRole("button", { name: "Runtimes" }).click();
+    await page.getByRole("heading", { name: "Runtimes" }).waitFor({ timeout: 10_000 });
+    const openAiRuntime = page.locator(".ht-runtime").filter({ hasText: "OpenAI-compatible endpoint" }).first();
+    await openAiRuntime.locator("code").filter({ hasText: "OPENAI_COMPATIBLE_BASE_URL" }).waitFor({ timeout: 10_000 });
+    if ((await openAiRuntime.getByRole("button", { name: /install/i }).count()) > 0) {
+      throw new Error("OpenAI-compatible endpoint must be configured, not installed.");
+    }
+    if ((await page.getByText("One-Click Install").count()) > 0) {
+      throw new Error("Runtime page still exposes the old one-click install copy.");
+    }
+
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     if (overflow) throw new Error("Marketplace desktop layout has horizontal overflow.");
 
@@ -78,6 +91,11 @@ try {
     await page.waitForTimeout(250);
     const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     if (mobileOverflow) throw new Error("Marketplace mobile layout has horizontal overflow.");
+    if (writeDocAssets) {
+      await page.evaluate(() => window.scrollTo({ top: 760, left: 0, behavior: "instant" }));
+      await page.waitForTimeout(100);
+      await captureDocAsset(page, "marketplace-mobile.png");
+    }
 
     if (consoleErrors.length || failedRequests.length || badResponses.length) {
       throw new Error(
@@ -99,7 +117,7 @@ async function startLocalStack() {
   const api = new URL(apiUrl);
   const studio = new URL(studioUrl);
   children.push(spawnLogged("daemon", process.execPath, ["packages/daemon/dist/index.js"], {
-    env: { ...process.env, HT_MARKETPLACE_PORT: api.port, HT_MARKETPLACE_HOST: api.hostname },
+    env: { ...process.env, HT_MARKETPLACE_PORT: api.port, HT_MARKETPLACE_HOST: api.hostname, OPENAI_COMPATIBLE_BASE_URL: "" },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   }));
@@ -175,4 +193,13 @@ function appendOutput(child, chunk) {
 
 function combinedOutput() {
   return [...childOutput.values()].join("\n");
+}
+
+async function captureDocAsset(page, fileName) {
+  const assetDir = path.resolve("docs", "assets");
+  fs.mkdirSync(assetDir, { recursive: true });
+  await page.screenshot({
+    path: path.join(assetDir, fileName),
+    fullPage: false
+  });
 }

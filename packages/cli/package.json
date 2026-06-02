@@ -7,15 +7,24 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ht-llm-marketplace/ht-llm-marketplace.git",
+    "url": "git+https://github.com/HassTech-LLC/ht-llm-marketplace.git",
     "directory": "packages/cli"
   },
-  "keywords": ["cli", "llm", "local-ai", "gguf", "ollama", "huggingface"],
+  "keywords": [
+    "cli",
+    "llm",
+    "local-ai",
+    "gguf",
+    "ollama",
+    "huggingface"
+  ],
   "main": "./dist/index.js",
   "bin": {
-    "htlm": "./dist/index.js"
+    "htlm": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },

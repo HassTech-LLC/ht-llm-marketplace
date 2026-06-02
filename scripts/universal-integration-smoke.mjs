@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const cli = path.join(root, "packages", "cli", "src", "index.js");
@@ -23,6 +24,10 @@ try {
   runAutoCase("vscode", { "package.json": JSON.stringify({ engines: { vscode: "^1.95.0" }, contributes: {} }) }, ["Project target: extension", "Extension pattern"]);
 
   assertExample("examples/universal/python/openai_chat.py", ["urllib.request", "OPENAI_BASE_URL"]);
+  assertExample("examples/universal/python/pyproject.toml", ["htlm-python-starter", "requires-python"]);
+  assertExample("examples/universal/node-terminal/package.json", ["htlm-node-terminal-starter", "\"chat\""]);
+  assertExample("examples/universal/node-terminal/chat.mjs", ["fetch", "OPENAI_BASE_URL", "/chat/completions"]);
+  assertExample("examples/universal/plain-html/index.html", ["ht-model-marketplace", "/widget/ht-model-marketplace.js"]);
   assertExample("examples/universal/django/templates/local_models.html", ["ht-model-marketplace", "/widget/ht-model-marketplace.js"]);
   assertExample("examples/universal/rails/app/views/local_models/index.html.erb", ["ht-model-marketplace", "/widget/ht-model-marketplace.js"]);
   assertExample("examples/universal/laravel/resources/views/local-models.blade.php", ["ht-model-marketplace", "/widget/ht-model-marketplace.js"]);
@@ -31,7 +36,9 @@ try {
   assertExample("examples/universal/tauri/LocalModels.tsx", ["ModelMarketplace", "@ht-llm-marketplace/react"]);
   assertExample("examples/universal/vscode/extension.ts", ["/v1/chat/completions", "htlm"]);
   assertExample("examples/universal/agents/openai-compatible.env", ["OPENAI_BASE_URL", "OPENAI_API_KEY"]);
-  assertExample("docs/universal-integration.md", ["Any Project Quickstart", "Framework Matrix", "Release Bundle"]);
+  assertExample("examples/universal/README.md", ["Runnable Starters", "Framework Snippets"]);
+  assertExample("docs/universal-integration.md", ["Any Project Quickstart", "Framework Matrix", "Release Bundle", "runnable Node terminal starter"]);
+  await runNodeTerminalStarter();
 
   console.log("universal integration smoke ok");
 } finally {
@@ -56,6 +63,7 @@ function runCli(args, cwd, expected) {
     cwd,
     env: { ...process.env, HT_MARKETPLACE_API_URL: "http://127.0.0.1:3001" },
     encoding: "utf8",
+    timeout: 15_000,
     windowsHide: true
   });
   if (result.status !== 0) {
@@ -66,6 +74,83 @@ function runCli(args, cwd, expected) {
       throw new Error(`CLI ${args.join(" ")} output missing ${marker}\nstdout=${result.stdout}`);
     }
   }
+}
+
+async function runNodeTerminalStarter() {
+  const server = http.createServer((req, res) => {
+    if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+      res.writeHead(404).end();
+      return;
+    }
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 20_000) req.destroy(new Error("request too large"));
+    });
+    req.on("end", () => {
+      const payload = JSON.parse(body);
+      if (!payload.messages?.[0]?.content) {
+        res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "missing message" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json", connection: "close" }).end(JSON.stringify({
+        choices: [{ message: { role: "assistant", content: "starter ok" } }]
+      }));
+    });
+  });
+  const port = await listen(server);
+  try {
+    const result = await runStarterProcess(port);
+    if (result.status !== 0 || !result.stdout.includes("starter ok")) {
+      throw new Error(`Node terminal starter failed\nstatus=${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`);
+    }
+  } finally {
+    server.closeAllConnections?.();
+    server.closeIdleConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function runStarterProcess(port) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["chat.mjs", "hello"], {
+      cwd: path.join(root, "examples", "universal", "node-terminal"),
+      env: { ...process.env, OPENAI_BASE_URL: `http://127.0.0.1:${port}/v1` },
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("Node terminal starter timed out"));
+    }, 15_000);
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object") resolve(address.port);
+      else reject(new Error("Unable to allocate starter smoke port"));
+    });
+  });
 }
 
 function assertExample(relative, markers) {

@@ -36,7 +36,7 @@ Delete plans should only execute against marketplace-owned artifacts inside conf
 
 ## Runtime Install Boundary
 
-One-click installs invoke local package managers. In v1, automated install is Windows-first through `winget`; macOS and Linux return manual install commands.
+Optional runtime installs invoke local package managers. In v1, automated install is Windows-first through `winget`; macOS and Linux return manual install commands.
 
 Treat runtime install actions as explicit user actions. Do not trigger them during passive scans, embed load, or catalog search.
 

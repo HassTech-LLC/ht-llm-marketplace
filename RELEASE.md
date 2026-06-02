@@ -13,10 +13,17 @@ Use this before tagging or publishing npm packages.
 
 ```powershell
 npm install
-npm run release:check
+npm run release:preflight
+npm run publish:dry-run
 ```
 
-`release:check` runs typecheck, tests, build, dry-pack, and external package smoke.
+`release:preflight` runs the release gate, desktop dependency install, Studio smoke, installer smoke, clean-room consumer smoke, and optional Docker smoke. On a Docker-capable CI runner, use:
+
+```powershell
+npm run release:preflight:ci
+```
+
+Track any remaining launch blockers in [`docs/launch-gap-completion-plan-2026-06-01.md`](docs/launch-gap-completion-plan-2026-06-01.md), especially Docker proof, remote CI observation, and clean-room consumer validation.
 
 ## 3. Manual UI Smoke
 
@@ -50,6 +57,12 @@ npx htlm start
 ```
 
 Then open an embedding app against the daemon URL printed by `htlm start`.
+
+Before publish, the equivalent local clean-room tarball path is:
+
+```powershell
+npm run smoke:consumer
+```
 
 ## 6. Tag And Notes
 

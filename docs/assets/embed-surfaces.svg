@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">HT Local LLM Marketplace embeddable surfaces</title>
+  <desc id="desc">React, Web Component, SDK, CLI, and Studio surfaces connecting to one local daemon.</desc>
+  <rect width="1200" height="720" fill="#f8fafc"/>
+  <rect x="76" y="72" width="1048" height="576" rx="20" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="116" y="130" fill="#0f172a" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">One marketplace, many host apps</text>
+  <text x="116" y="170" fill="#475569" font-family="Inter, Arial, sans-serif" font-size="20">Each surface talks to the same local daemon and model inventory.</text>
+  <g font-family="Inter, Arial, sans-serif" font-size="19">
+    <rect x="116" y="232" width="210" height="96" rx="14" fill="#e0f2fe" stroke="#0284c7"/>
+    <text x="150" y="272" fill="#075985" font-weight="700">React</text>
+    <text x="150" y="300" fill="#0f172a">ModelMarketplace</text>
+    <rect x="116" y="376" width="210" height="96" rx="14" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="150" y="416" fill="#166534" font-weight="700">Web Component</text>
+    <text x="150" y="444" fill="#0f172a">ht-model-marketplace</text>
+    <rect x="494" y="300" width="212" height="128" rx="18" fill="#111827" stroke="#334155"/>
+    <text x="548" y="352" fill="#f8fafc" font-weight="700">Local daemon</text>
+    <text x="532" y="386" fill="#cbd5e1">/v1 + inventory</text>
+    <rect x="874" y="232" width="210" height="96" rx="14" fill="#fef3c7" stroke="#d97706"/>
+    <text x="914" y="272" fill="#92400e" font-weight="700">CLI / Agents</text>
+    <text x="914" y="300" fill="#0f172a">htlm + OpenAI API</text>
+    <rect x="874" y="376" width="210" height="96" rx="14" fill="#ede9fe" stroke="#7c3aed"/>
+    <text x="914" y="416" fill="#5b21b6" font-weight="700">HT Studio</text>
+    <text x="914" y="444" fill="#0f172a">Peak runtime controls</text>
+    <path d="M326 280 H494" stroke="#64748b" stroke-width="4"/>
+    <path d="M326 424 H494" stroke="#64748b" stroke-width="4"/>
+    <path d="M706 280 H874" stroke="#64748b" stroke-width="4"/>
+    <path d="M706 424 H874" stroke="#64748b" stroke-width="4"/>
+  </g>
+</svg>

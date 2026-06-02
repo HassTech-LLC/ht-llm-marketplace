@@ -11,7 +11,18 @@ HT Local LLM Marketplace is a local-first model marketplace, runtime control pla
 | Wire an agent or OpenAI-compatible client | [`agent-integration.md`](agent-integration.md) |
 | Customize the UI | [`customization.md`](customization.md) |
 | Understand local privacy and safety boundaries | [`security-privacy.md`](security-privacy.md) |
+| Review GitHub repo positioning and footprint claims | [`github-repo-design.md`](github-repo-design.md) |
 | Prepare packages or a local release bundle | [`open-source.md`](open-source.md) |
+| Finish the remaining launch gaps | [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md) |
+
+## Visual Proof
+
+| Surface | Asset |
+| --- | --- |
+| Marketplace desktop | [`assets/marketplace-desktop.png`](assets/marketplace-desktop.png) |
+| Marketplace mobile | [`assets/marketplace-mobile.png`](assets/marketplace-mobile.png) |
+| Terminal marketplace | [`assets/terminal-marketplace.svg`](assets/terminal-marketplace.svg) |
+| Embeddable surfaces | [`assets/embed-surfaces.svg`](assets/embed-surfaces.svg) |
 
 ## Product Surfaces
 
@@ -34,7 +45,9 @@ flowchart LR
 - [`customization.md`](customization.md): React config, Web Component attributes, tokens, and feature flags.
 - [`runtime-residency-modes.md`](runtime-residency-modes.md): balanced, fast-parallel, and quality-single residency modes.
 - [`open-source.md`](open-source.md): package publishing, local bundle generation, privacy expectations, and contribution workflow.
+- [`github-repo-design.md`](github-repo-design.md): public repo positioning, footprint language, tech stack, topics, and proof gates.
 - [`security-privacy.md`](security-privacy.md): local-first boundaries and privileged action handling.
+- [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md): Docker proof, release distribution, remote CI observation, runnable template expansion, and external consumer validation.
 
 ## Runtime And Replacement Notes
 

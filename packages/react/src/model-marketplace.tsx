@@ -24,6 +24,12 @@ import {
   type MarketplaceView
 } from "./config.js";
 
+type InstallableRuntimeId = Extract<RuntimeStatus["id"], "ollama" | "lmstudio">;
+
+function isInstallableRuntime(runtime: RuntimeStatus): runtime is RuntimeStatus & { id: InstallableRuntimeId } {
+  return runtime.id === "ollama" || runtime.id === "lmstudio";
+}
+
 // --- Premium Company Logo Renderer ---
 interface CompanyLogoProps {
   modelName?: string;
@@ -566,7 +572,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
   const [sortBy, setSortBy] = useState<string>("downloads");
   const [activeDetailTab, setActiveDetailTab] = useState<"readme" | "prompt" | "hardware">("readme");
 
-  const [installingRuntime, setInstallingRuntime] = useState<string | null>(null);
+  const [installingRuntime, setInstallingRuntime] = useState<InstallableRuntimeId | null>(null);
   const [startingOllama, setStartingOllama] = useState(false);
 
   useEffect(() => {
@@ -850,7 +856,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     changeView("downloads");
   }
 
-  async function installEngine(runtime: "ollama" | "lmstudio") {
+  async function installEngine(runtime: InstallableRuntimeId) {
     setInstallingRuntime(runtime);
     setMessage("");
     try {
@@ -1652,36 +1658,36 @@ You are a helpful, precision-aligned local assistant.
                 </div>
                 <p>{runtime.endpoint || "No endpoint configured"}</p>
                 <strong>{runtime.models?.length || 0} local models</strong>
-                <small style={{ display: 'block', marginBottom: '12px' }}>{runtime.notes.join(" ") || "No issues reported."}</small>
-                
-                <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
-                  {!runtime.installed && (
-                    <button 
-                      className="ht-primary" 
-                      style={{ background: 'linear-gradient(135deg, #818cf8, #a78bfa)', border: 'none', width: '100%', padding: '6px 12px', cursor: 'pointer', borderRadius: '4px', color: 'white', fontWeight: 'bold' }}
-                      disabled={installingRuntime !== null}
-                      onClick={() => void installEngine(runtime.id as any)}
-                    >
-                      {installingRuntime === runtime.id ? "⚙️ Setting Up..." : "🚀 One-Click Install"}
+                <small style={{ display: "block", marginBottom: "12px" }}>{runtime.notes.join(" ") || "No issues reported."}</small>
+
+                <div className="ht-runtime-actions">
+                  {!runtime.installed && isInstallableRuntime(runtime) && (
+                    <button className="ht-primary ht-runtime-action" disabled={installingRuntime !== null} onClick={() => void installEngine(runtime.id)}>
+                      {installingRuntime === runtime.id ? "Setting up..." : "Install optional runtime"}
                     </button>
                   )}
+                  {!runtime.installed && runtime.id === "openai-compatible" && (
+                    <div className="ht-runtime-config">
+                      <span>Configure endpoint</span>
+                      <code>OPENAI_COMPATIBLE_BASE_URL</code>
+                    </div>
+                  )}
+                  {!runtime.installed && runtime.id === "llamacpp" && (
+                    <div className="ht-runtime-config">
+                      <span>Managed by HT Studio Engine</span>
+                    </div>
+                  )}
                   {runtime.installed && !runtime.online && runtime.id === "ollama" && (
-                    <button 
-                      className="ht-primary" 
-                      style={{ background: 'linear-gradient(135deg, #06b6d4, #3b82f6)', border: 'none', width: '100%', padding: '6px 12px', cursor: 'pointer', borderRadius: '4px', color: 'white', fontWeight: 'bold' }}
-                      disabled={startingOllama}
-                      onClick={() => void startOllamaService()}
-                    >
-                      {startingOllama ? "⚡ Booting Engine..." : "🔌 Start Engine Service"}
+                    <button className="ht-primary ht-runtime-action" disabled={startingOllama} onClick={() => void startOllamaService()}>
+                      {startingOllama ? "Booting engine..." : "Start engine service"}
                     </button>
                   )}
                   {runtime.installed && !runtime.online && runtime.id === "lmstudio" && (
-                    <button 
-                      className="ht-primary" 
-                      style={{ background: 'linear-gradient(135deg, #06b6d4, #3b82f6)', border: 'none', width: '100%', padding: '6px 12px', cursor: 'pointer', borderRadius: '4px', color: 'white', fontWeight: 'bold' }}
-                      onClick={() => void client.startLmStudioServer(1234).then(() => refresh()).catch(err => setMessage(err.message))}
+                    <button
+                      className="ht-primary ht-runtime-action"
+                      onClick={() => void client.startLmStudioServer(1234).then(() => refresh()).catch((err) => setMessage(err.message))}
                     >
-                      🔌 Start Engine Service
+                      Start engine service
                     </button>
                   )}
                 </div>
