@@ -150,6 +150,18 @@ const getParameterSize = (name: string) => {
   return match ? `${match[1]}B` : "GGUF";
 };
 
+const getEstimatedSizeFromParams = (name: string): string => {
+  const match = name.match(/(\d+(?:\.\d+)?)[bB]/);
+  if (match) {
+    const num = parseFloat(match[1]);
+    if (num > 0) {
+      const gb = num * 0.6;
+      return `~${gb.toFixed(1)} GB`;
+    }
+  }
+  return "";
+};
+
 const getSpecialtyTags = (item: CatalogItem) => {
   const specialties: string[] = [];
   const nameLower = item.name.toLowerCase();
@@ -316,21 +328,26 @@ interface QuantSelectorProps {
   downloadMode: MarketplaceDownloadMode;
   setDownloadMode: React.Dispatch<React.SetStateAction<MarketplaceDownloadMode>>;
   downloadLabel: string;
+  selectedPath: string;
+  setSelectedPath: (path: string) => void;
 }
 
-function QuantSelector({ files, installFile, scan, getParameterSize, selected, showSpecs = true, downloadMode, setDownloadMode, downloadLabel }: QuantSelectorProps) {
+function QuantSelector({ 
+  files, 
+  installFile, 
+  scan, 
+  getParameterSize, 
+  selected, 
+  showSpecs = true, 
+  downloadMode, 
+  setDownloadMode, 
+  downloadLabel,
+  selectedPath,
+  setSelectedPath
+}: QuantSelectorProps) {
   const ggufs = useMemo(() => {
     return [...files].filter(f => f.path.toLowerCase().endsWith(".gguf")).sort((a, b) => (a.sizeBytes ?? Number.MAX_SAFE_INTEGER) - (b.sizeBytes ?? Number.MAX_SAFE_INTEGER));
   }, [files]);
-
-  const [selectedPath, setSelectedPath] = useState<string>("");
-
-  useEffect(() => {
-    if (ggufs.length > 0) {
-      const defaultFile = pickRecommendedQuant(ggufs);
-      setSelectedPath(defaultFile.path);
-    }
-  }, [ggufs]);
 
   const selectedFile = useMemo(() => {
     return ggufs.find(f => f.path === selectedPath);
@@ -569,11 +586,25 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
   const [filterFormat, setFilterFormat] = useState<string>("all");
   const [filterSpecialty, setFilterSpecialty] = useState<string>("all");
   const [filterSize, setFilterSize] = useState<string>("all");
+  const [filterParamSize, setFilterParamSize] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("downloads");
   const [activeDetailTab, setActiveDetailTab] = useState<"readme" | "prompt" | "hardware">("readme");
+  const [selectedPath, setSelectedPath] = useState<string>("");
 
   const [installingRuntime, setInstallingRuntime] = useState<InstallableRuntimeId | null>(null);
   const [startingOllama, setStartingOllama] = useState(false);
+
+  useEffect(() => {
+    if (files.length > 0) {
+      const ggufs = [...files].filter(f => f.path.toLowerCase().endsWith(".gguf"));
+      if (ggufs.length > 0) {
+        const defaultFile = pickRecommendedQuant(ggufs);
+        setSelectedPath(defaultFile.path);
+      }
+    } else {
+      setSelectedPath("");
+    }
+  }, [files]);
 
   useEffect(() => {
     setCurrentApiUrl(marketplaceConfig.apiUrl);
@@ -726,6 +757,19 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
       });
     }
 
+    // Filter by Parameter Size
+    if (filterParamSize !== "all") {
+      result = result.filter(item => {
+        const match = item.name.match(/(\d+(?:\.\d+)?)[bB]/);
+        const val = match ? parseFloat(match[1]) : 0;
+        if (filterParamSize === "tiny") return val > 0 && val < 3;
+        if (filterParamSize === "small") return val >= 3 && val <= 9;
+        if (filterParamSize === "medium") return val > 9 && val <= 20;
+        if (filterParamSize === "large") return val > 20;
+        return true;
+      });
+    }
+
     // Sort
     result.sort((a, b) => {
       if (sortBy === "downloads") {
@@ -747,7 +791,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
     });
 
     return result;
-  }, [catalog, filterFormat, filterSpecialty, filterSize, sortBy]);
+  }, [catalog, filterFormat, filterSpecialty, filterSize, filterParamSize, sortBy]);
 
   const bestCatalogPick = useMemo(() => pickBestCatalogItem(processedCatalog), [processedCatalog]);
 
@@ -1035,6 +1079,30 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
   const selectedRecommendedFile = files.length ? pickRecommendedQuant(files) : undefined;
   const selectedRecommendationReasons = selected ? recommendationReasons(selected, scan, selectedRecommendedFile) : [];
 
+  const activeSelectedFile = useMemo(() => {
+    return files.find(f => f.path === selectedPath);
+  }, [files, selectedPath]);
+
+  const activeSize = useMemo(() => {
+    if (!selected) return "";
+    if (selectedLocalArtifact?.actualBytes) {
+      return bytes(selectedLocalArtifact.actualBytes);
+    }
+    if (activeSelectedFile?.sizeBytes) {
+      return bytes(activeSelectedFile.sizeBytes);
+    }
+    if (selectedRecommendedFile?.sizeBytes) {
+      return bytes(selectedRecommendedFile.sizeBytes);
+    }
+    const match = selected.name.match(/(\d+(?:\.\d+)?)[bB]/);
+    if (match) {
+      const num = parseFloat(match[1]);
+      const gb = num * 0.6;
+      return `~${gb.toFixed(1)} GB`;
+    }
+    return "";
+  }, [selected, selectedLocalArtifact, activeSelectedFile, selectedRecommendedFile]);
+
   return (
     <div className={rootClassName} style={rootStyle}>
       <aside className="ht-sidebar">
@@ -1162,10 +1230,17 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                     <option value="general">General</option>
                   </select>
                   <select value={filterSize} onChange={(e) => setFilterSize(e.target.value)} className="ht-filter-select">
-                    <option value="all">All hardware fits</option>
-                    <option value="excellent">Fast local fit</option>
-                    <option value="good">GPU fit</option>
-                    <option value="heavy">Heavy fit</option>
+                    <option value="all">All memory sizes</option>
+                    <option value="excellent">Fast local fit (&lt; 5GB | Under 8GB RAM)</option>
+                    <option value="good">GPU fit (5GB - 12GB | 8GB - 16GB RAM)</option>
+                    <option value="heavy">Heavy fit (12GB+ | 16GB+ RAM)</option>
+                  </select>
+                  <select value={filterParamSize} onChange={(e) => setFilterParamSize(e.target.value)} className="ht-filter-select">
+                    <option value="all">All model parameters</option>
+                    <option value="tiny">Tiny (&lt; 3B | ~2GB RAM)</option>
+                    <option value="small">Small (3B - 9B | ~5GB RAM)</option>
+                    <option value="medium">Medium (9B - 20B | ~10GB RAM)</option>
+                    <option value="large">Large (&gt; 20B | ~20GB+ RAM)</option>
                   </select>
                 </div>
                 <div className="ht-sort-group">
@@ -1215,7 +1290,17 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                       </div>
                       <div className="ht-item-badges">
                         <span className="ht-meta-pill">{sourceLabel(item.source)}</span>
-                        {showSpecs && <span className="ht-meta-pill ht-size-pill">{pSize}</span>}
+                        {showSpecs && (
+                          <span className="ht-meta-pill ht-size-pill">
+                            {pSize}
+                            {localArtifact?.actualBytes 
+                              ? ` • ${bytes(localArtifact.actualBytes)}` 
+                              : (() => {
+                                  const est = getEstimatedSizeFromParams(item.name);
+                                  return est ? ` • ${est}` : "";
+                                })()}
+                          </span>
+                        )}
                         <span className={`ht-meta-pill ht-license-pill is-${license.tone}`}>{license.label}</span>
                         {localArtifact ? (
                           <span className={`ht-meta-pill ht-evidence-pill is-${verificationTone(localArtifact.verificationStatus)}`}>
@@ -1418,6 +1503,8 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                             downloadMode={downloadMode}
                             setDownloadMode={setDownloadMode}
                             downloadLabel={marketplaceConfig.labels.buttons.downloadQuantized}
+                            selectedPath={selectedPath}
+                            setSelectedPath={setSelectedPath}
                           />
                         )}
                       </>
@@ -1431,6 +1518,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                       onClick={() => setActiveDetailTab('readme')}
                     >
                       Model card
+                      {activeSize && <span className="ht-tab-size-badge">{activeSize}</span>}
                     </button>
                     <button 
                       className={`ht-codex-tab-btn ${activeDetailTab === 'prompt' ? 'is-active' : ''}`}
@@ -1443,6 +1531,7 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                       onClick={() => setActiveDetailTab('hardware')}
                     >
                       Local fit
+                      {activeSize && <span className="ht-tab-size-badge">{activeSize}</span>}
                     </button>
                   </div>
 
@@ -1471,6 +1560,11 @@ export function ModelMarketplace({ apiUrl, compact, config, onThemeChange }: Mod
                                 <li><strong>Catalog source</strong>: {sourceFactLine(selected)}</li>
                                 <li><strong>Recommended file</strong>: {selectedRecommendedFile ? selectedRecommendedFile.path.split("/").pop() : "Select a GGUF file to see local fit."}</li>
                                 <li><strong>Fit basis</strong>: {selectedRecommendationReasons.join(" / ")}</li>
+                                {activeSize && (
+                                  <li>
+                                    <strong>Model size</strong>: {activeSize} {selectedLocalArtifact ? "(Downloaded)" : "(Estimated download)"}
+                                  </li>
+                                )}
                               </ul>
                               <h3>License and attribution</h3>
                               <p>{selectedLicense?.detail} Review the upstream repository terms before commercial use or redistribution.</p>
@@ -1510,6 +1604,12 @@ You are a helpful, precision-aligned local assistant.
                           <p>{scan?.gpus?.length ? scan.gpus.map((gpu) => `${gpu.name}${gpu.memoryTotalBytes ? ` (${bytes(gpu.memoryTotalBytes)} VRAM)` : ""}`).join(", ") : "No GPU telemetry is available yet. Run Refresh Scan to update local fit."}</p>
                           <h3>Memory and storage</h3>
                           <p>{scan ? `${bytes(scan.os.freeMemoryBytes)} system memory free and ${scan.disk.freeBytes ? bytes(scan.disk.freeBytes) : "unknown"} disk space free at last scan.` : "System scan has not completed yet."}</p>
+                          {activeSize && (
+                            <>
+                              <h3>Model size requirements</h3>
+                              <p>This model requires approximately <strong>{activeSize}</strong> of storage and memory space. {selectedLocalArtifact ? "It is already fully downloaded and ready to run locally." : "Ensure you have sufficient disk space before downloading."}</p>
+                            </>
+                          )}
                           <h3>Recommendation</h3>
                           <p>{selectedRecommendedFile ? `${selectedRecommendedFile.path.split("/").pop()} is the current recommended file based on available size and fit metadata.` : "Open the file list to calculate a specific GGUF recommendation."}</p>
                         </div>

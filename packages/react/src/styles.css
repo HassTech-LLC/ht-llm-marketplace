@@ -749,10 +749,6 @@
   gap: 8px;
 }
 
-.ht-filter-group .ht-filter-select:nth-child(3) {
-  grid-column: 1 / -1;
-}
-
 .ht-sort-group {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1705,6 +1701,7 @@
   display: grid;
   gap: 4px;
   min-width: 0;
+  flex: 1;
 }
 
 .ht-simple-quant-label {
@@ -1839,6 +1836,25 @@
 .ht-codex-tab-btn.is-active {
   color: var(--ht-cyan);
   border-bottom-color: var(--ht-cyan);
+}
+
+.ht-tab-size-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--ht-muted);
+}
+
+.ht-codex-tab-btn.is-active .ht-tab-size-badge {
+  background: rgba(6, 182, 212, 0.15);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: var(--ht-cyan);
 }
 
 /* --- Light Mode Matrix Styles overrides --- */

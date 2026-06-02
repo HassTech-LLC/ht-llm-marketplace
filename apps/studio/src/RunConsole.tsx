@@ -661,7 +661,16 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         setTurns([]);
       } catch (err) {
         rememberFailure(request.path, true);
-        setError(`Could not load ${label}: ${(err as Error).message}`);
+        const rawMsg = (err as Error).message;
+        let explained = rawMsg;
+        if (rawMsg.includes("allocate Vulkan") || rawMsg.includes("allocateMemory") || rawMsg.includes("OutOfDeviceMemory") || rawMsg.includes("out of memory")) {
+          explained = `${rawMsg}\n\n💡 DIAGNOSIS: Out of GPU Memory (VRAM). This model is too large to fit entirely inside your graphics card VRAM.\n\n🛠️ FIX: Expand the "Advanced engine controls" section below and reduce the "GPU offload layers" (e.g., to 10 or 15) or set it to 0 (CPU-only) to load the remaining weights into your system RAM.`;
+        } else if (rawMsg.includes("Failed to load model") || rawMsg.includes("unable to load")) {
+          explained = `${rawMsg}\n\n💡 DIAGNOSIS: Generic loading failure. The file may be corrupt, incomplete, or contain an unsupported quantization type.\n\n🛠️ FIX: Verify the file integrity, redownload the GGUF file, or click "Self-Heal & Upgrade Engine" below if this is a very new GGUF file format.`;
+        } else if (rawMsg.includes("architecture") || rawMsg.includes("unsupported")) {
+          explained = `${rawMsg}\n\n💡 DIAGNOSIS: Unsupported GGUF architecture. The model is too new for the current native engine.\n\n🛠️ FIX: Start your local Ollama app to trigger automatic zero-copy fallback routing, or click "Self-Heal & Upgrade Engine" below to recompile with latest architecture support.`;
+        }
+        setError(`Could not load ${label}: ${explained}`);
       } finally {
         // Always re-sync so the loaded pill reflects reality after a failed load.
         await Promise.all([refreshStatus(), scan()]);
@@ -1219,7 +1228,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
 
       {error && (
         <div className="run-error" style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "flex-start" }}>
-          <span>{error}</span>
+          <span style={{ whiteSpace: "pre-line" }}>{error}</span>
           {(error.includes("needs llama.cpp") || error.includes("llama.cpp >=") || error.includes("engine") || error.includes("Failed to load") || error.includes("Failure")) && (
             <button
               className="run-btn active"

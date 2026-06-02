@@ -200,7 +200,7 @@ export const DEFAULT_MARKETPLACE_CONFIG: ResolvedMarketplaceConfig = {
     viewSettings: true
   },
   tokens: {},
-  defaultQuery: "qwen coder",
+  defaultQuery: "",
   storageKey: "ht_marketplace"
 };
 
