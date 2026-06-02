@@ -40,13 +40,13 @@ try {
     await page.locator(".ht-recommendation-panel").waitFor({ timeout: 25_000 });
     await page.locator(".ht-catalog-item-compact").first().waitFor({ timeout: 25_000 });
     await page.locator(".ht-catalog-item-compact").first().click();
-    await page.getByText("Source facts").waitFor({ timeout: 15_000 });
-    await page.getByText("License signal").waitFor({ timeout: 15_000 });
-    await page.getByText("Recommendation basis").waitFor({ timeout: 15_000 });
+    await page.locator(".ht-model-detail-pane").getByText("Source facts").waitFor({ timeout: 15_000 });
+    await page.locator(".ht-model-detail-pane").getByText("License signal").waitFor({ timeout: 15_000 });
+    await page.locator(".ht-model-detail-pane").getByText("Recommendation basis").waitFor({ timeout: 15_000 });
 
     const tabLabels = (await page.locator(".ht-codex-tab-btn").allTextContents()).map((label) => label.trim());
     for (const expected of ["Model card", "Prompt notes", "Local fit"]) {
-      if (!tabLabels.includes(expected)) throw new Error(`Missing marketplace detail tab: ${expected}. Saw: ${tabLabels.join(", ")}`);
+      if (!tabLabels.some(label => label.startsWith(expected))) throw new Error(`Missing marketplace detail tab: ${expected}. Saw: ${tabLabels.join(", ")}`);
     }
 
     await page.getByRole("button", { name: "Prompt notes" }).click();
