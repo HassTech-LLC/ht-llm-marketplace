@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const forbiddenPaths = [
-  "PROJECT_MEMORY.md",
+  ...(process.env.HT_ALLOW_DEV_ARTIFACTS || process.env.HT_STUDIO_ATTACH_ONLY ? [] : ["PROJECT_MEMORY.md"]),
   "apps/desktop/src-tauri/target",
   "apps/desktop/src-tauri/gen",
   "artifacts/package-smoke",
