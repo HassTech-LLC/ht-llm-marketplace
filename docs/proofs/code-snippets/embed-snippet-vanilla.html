@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HassTech Local LLM Web Component</title>
+  
+  <!-- Modern Inter / Outfit Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Import dynamic glassmorphic styles for the Model Marketplace -->
+  <link rel="stylesheet" href="http://127.0.0.1:3001/dist/web-component.css">
+</head>
+<body style="margin: 0; background-color: #030712; color: #f9fafb; font-family: 'Inter', sans-serif; display: flex; align-items: center; justify-center: center; min-height: 100vh;">
+
+  <div style="width: 100%; max-width: 1200px; padding: 2rem;">
+    <!-- Injected Web Component -->
+    <ht-model-marketplace 
+      api-url="http://127.0.0.1:3001" 
+      theme="dark" 
+      compact="false">
+    </ht-model-marketplace>
+  </div>
+
+  <!-- Universal Web Component Loader (No React / Framework required) -->
+  <script type="module" src="http://127.0.0.1:3001/dist/web-component.js"></script>
+  
+  <script>
+    const marketplace = document.querySelector('ht-model-marketplace');
+    marketplace.addEventListener('model-selected', (event) => {
+      console.log('User selected offline model:', event.detail);
+    });
+  </script>
+</body>
+</html>
