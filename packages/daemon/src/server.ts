@@ -2068,7 +2068,28 @@ async function safeLoadEngineModel(
     }
   }
 
-  return await context.engine.load(options);
+  try {
+    return await context.engine.load(options);
+  } catch (loadError) {
+    const ollamaStatus = await context.ollama.status();
+    if (ollamaStatus.online) {
+      const isOllamaSource = options.modelPath.includes(".ollama") || options.modelPath.includes("Ollama") || options.modelPath.includes("ollama-blobs");
+      const displayName = options.displayName || path.basename(options.modelPath);
+      let targetName = displayName;
+      if (!isOllamaSource) {
+        targetName = `ht-${displayName.toLowerCase().replace(/[^a-z0-9.-]/g, "-")}`;
+        const ollamaPath = options.modelPath.replace(/\\/g, "/");
+        const modelfileContent = `FROM "${ollamaPath}"`;
+        await context.ollama.createModel(targetName, modelfileContent);
+      }
+      return await context.engine.load({
+        ...options,
+        modelPath: `virtual:ollama:${targetName}`,
+        displayName: displayName
+      });
+    }
+    throw loadError;
+  }
 }
 
 async function runEngineUpgrade(context: RuntimeContext) {

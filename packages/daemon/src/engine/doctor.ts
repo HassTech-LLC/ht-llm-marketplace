@@ -8,7 +8,8 @@ import { fetchJsonWithLimit } from "../http.js";
 // supported (no false positives) — a genuine load failure is handled
 // gracefully downstream by the engine. Keyed by GGUF `general.architecture`.
 export const MIN_RELEASE_BY_ARCH: Record<string, number> = {
-  gemma4: 8637 // llama.cpp PR #21309; landed in ~b8637
+  gemma3: 9999, // Requires a very new upstream release; fall back to Ollama if present
+  gemma4: 8637  // llama.cpp PR #21309; landed in ~b8637
 };
 
 /** Parse a llama.cpp release tag like "b8390" into its number (8390). */
