@@ -105,6 +105,17 @@ The repository features a fully integrated check and gate suite:
 ## 🌟 5. Quality Standards & Rules of Engagement
 
 1. **Aesthetic Principles**: Frontend React components use premium Outfit/Inter typography, dynamic glassmorphism panels, customized HSL palettes, and fluid CSS micro-animations. Plain browser styles or raw, standard Bootstrap elements are strictly prohibited.
-2. **Clean-Room Quality**: Keep the codebase completely free of placeholder or loose `TODO` or `FIXME` comments in source files. All development tasks must be resolved.
+2. **Clean-Room Quality**: Keep the codebase completely free of placeholder or loose `TODO` or `FIXME` comments in source files. All interaction parameters and types must be fully clean and typed.
 3. **Loopback Safeguards**: Always default daemon APIs to loopback bounds unless explicitly configured otherwise by users.
 4. **Wiki Compounding Logs**: File all durable engineering architecture findings, Cloudflare configurations, and strategic decisions in the cross-project wiki vault (`C:\Users\Owner\Documents\claude-obsidian`).
+
+---
+
+## 🎨 6. Premium UI/UX Cockpit & Glassmorphism Overhaul
+
+To elevate the HT Studio console into a state-of-the-art AI command panel, we executed a professional UI audit and design upgrade:
+* **Elimination of Redundant Download Chips**: Removed the horizontal `"Your downloads"` `.run-owned` row, saving layout height and ensuring the Chat flow sits higher in the browser window fold.
+* **Compact Model Picker**: Merged the `"Rescan"` controls and system model counts into a sleek, single-line header above the selection box, collapsing layout height.
+* **Dropdown Selection Badges**: Integrated a high-contrast neon-cyan glassmorphic badge (`[Downloaded]`) inside the searchable options map, identifying officially verified marketplace assets natively at the selection interface.
+* **Glassmorphic Telemetry Cards**: Refactored the Latency Dashboard statistics row (`first token`, `total`, `tok/s`, `queue depth`) using fluid glassmorphic cards with frosted translucent backdrops, glowing shadows, inset borders, and micro-hover lifts (`translateY(-2px)`).
+* **Multi-Workspace Sync**: Applied identical layouts, styles, and badges across both the `HT llm Markteplace` and standalone `ht studio` codebases, maintaining complete type and test compliance.

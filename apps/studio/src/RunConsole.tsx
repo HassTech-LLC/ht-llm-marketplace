@@ -1296,41 +1296,18 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
         </section>
       )}
 
-      {owned.length > 0 && (
-        <section className="run-owned">
-          <span className="run-owned-label">Your downloads</span>
-          <div className="run-owned-chips">
-            {owned.map((model) => {
-              const isCurrent = (loadedPath && model.path && loadedPath.toLowerCase() === model.path.toLowerCase()) || 
-                                (loaded && loaded.toLowerCase() === model.name.toLowerCase());
-              const readiness = readinessForModel(model);
-              return (
-                <button
-                  key={model.path}
-                  className={`run-chip${isCurrent ? " active" : ""}${isFailed(model.path) ? " failed" : ""}`}
-                  disabled={Boolean(busy)}
-                  title={`${readiness.notes.join(" / ") || "ready"} - ${model.path}`}
-                  onClick={() => void load({ path: model.path }, model.name)}
-                >
-                  {iconLabels ? `${isCurrent ? RUN_ICONS.active : RUN_ICONS.play} ` : ""}
-                  {isCurrent ? "Active" : "Load"} {formatModelName(model.name)}
-                  <span className="run-chip-size">{formatBytes(model.sizeBytes)}</span>
-                  {readiness.notes[0] && <span className={`run-chip-state ${readiness.level}`}>{readiness.notes[0]}</span>}
-                  {isCurrent && <span className="run-chip-active-badge">active</span>}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {owned.length > 0 ? null : null}
 
       <section className="run-loader">
-        <div className="run-loader-head">
-          <span className="run-loader-title">
-            {scanning ? "Scanning your system..." : `${models.length} model${models.length === 1 ? "" : "s"} found on this system`}
+        <div className="run-loader-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+          <span className="run-loader-title" style={{ fontSize: "0.82rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--ht-muted)" }}>
+            {scanning ? "Scanning..." : "Select AI Model"} 
+            <span style={{ marginLeft: "6px", color: "var(--ht-accent, #5b9dff)", textTransform: "none", fontSize: "0.78rem" }}>
+              ({models.length} on system)
+            </span>
           </span>
-          <button className="run-btn ghost small" onClick={() => void scan()} disabled={scanning || Boolean(busy)}>
-            Rescan
+          <button className="run-btn ghost small" onClick={() => void scan()} disabled={scanning || Boolean(busy)} style={{ padding: "3px 8px", fontSize: "0.75rem", borderRadius: "6px" }}>
+            Rescan system
           </button>
         </div>
 
@@ -1380,6 +1357,7 @@ export function RunConsole({ active, pendingLoad, onPendingLoadHandled }: RunCon
                       <span className="run-option-main">
                         <span className="run-option-name">{formatModelName(model.name)}</span>
                         {model.loaded && <span className="run-tag loaded">loaded</span>}
+                        {model.source === "marketplace" && <span className="run-tag owned">Downloaded</span>}
                         {readiness.notes.map((note) => (
                           <span key={note} className={`run-tag ${readiness.level === "warn" ? "warn" : readiness.level}`}>
                             {note === "failed before" && iconLabels ? `${RUN_ICONS.warning} ` : ""}{note}
