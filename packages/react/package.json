@@ -34,6 +34,6 @@
     "react": ">=18 <20"
   },
   "devDependencies": {
-    "react": "^19.2.6"
+    "react": "^19.2.7"
   }
 }
