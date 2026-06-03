@@ -515,7 +515,7 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(parsed.candidates[0].healthy).toBe(true);
   });
 
-  it("POST /v1/embeddings returns stable unsupported response until local embeddings are enabled", async () => {
+  it("POST /v1/embeddings returns stable unsupported response when local embeddings are disabled", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);
     const handler = (server as any)._events.request;
