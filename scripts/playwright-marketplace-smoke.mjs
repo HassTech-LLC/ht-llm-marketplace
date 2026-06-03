@@ -31,6 +31,32 @@ try {
     }
     context = await browser.newContext(contextOptions);
     page = await context.newPage();
+    await page.route("**/api/catalog/hf/files**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          files: [{
+            repoId: "unsloth/Qwen3-Coder-Next-GGUF",
+            path: "Qwen3-Coder-Next-Q4_K_M.gguf",
+            format: "gguf",
+            sizeBytes: 17_894_310_976,
+            downloadUrl: "https://example.test/Qwen3-Coder-Next-Q4_K_M.gguf",
+            runnable: true,
+            fit: { level: "review", label: "Review", reasons: ["Deterministic smoke fixture."] }
+          }]
+        })
+      });
+    });
+    await page.route("**/api/catalog/hf/readme**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          readme: "# Qwen3 Coder Next GGUF\n\nDeterministic model card fixture for browser smoke tests."
+        })
+      });
+    });
     const consoleErrors = [];
     const failedRequests = [];
     const badResponses = [];
