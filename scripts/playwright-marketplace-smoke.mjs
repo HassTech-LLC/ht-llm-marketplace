@@ -50,9 +50,9 @@ try {
     await page.locator(".ht-recommendation-panel").waitFor({ timeout: 25_000 });
     await page.locator(".ht-catalog-item-compact").first().waitFor({ timeout: 25_000 });
     await page.locator(".ht-catalog-item-compact").first().click();
-    await page.locator(".ht-model-detail-pane").getByText("Source facts").waitFor({ timeout: 15_000 });
-    await page.locator(".ht-model-detail-pane").getByText("License signal").waitFor({ timeout: 15_000 });
-    await page.locator(".ht-model-detail-pane").getByText("Recommendation basis").waitFor({ timeout: 15_000 });
+    await page.locator(".ht-model-detail-pane span").filter({ hasText: /^Source facts$/ }).first().waitFor({ timeout: 15_000 });
+    await page.locator(".ht-model-detail-pane span").filter({ hasText: /^License signal$/ }).first().waitFor({ timeout: 15_000 });
+    await page.locator(".ht-model-detail-pane span").filter({ hasText: /^Recommendation basis$/ }).first().waitFor({ timeout: 15_000 });
 
     const tabLabels = (await page.locator(".ht-codex-tab-btn").allTextContents()).map((label) => label.trim());
     for (const expected of ["Model card", "Prompt notes", "Local fit"]) {
@@ -152,7 +152,13 @@ async function startLocalStack() {
   const api = new URL(apiUrl);
   const studio = new URL(studioUrl);
   children.push(spawnLogged("daemon", process.execPath, ["packages/daemon/dist/index.js"], {
-    env: { ...process.env, HT_MARKETPLACE_PORT: api.port, HT_MARKETPLACE_HOST: api.hostname, OPENAI_COMPATIBLE_BASE_URL: "" },
+    env: {
+      ...process.env,
+      HT_MARKETPLACE_PORT: api.port,
+      HT_MARKETPLACE_HOST: api.hostname,
+      HT_MARKETPLACE_ALLOWED_ORIGINS: studio.origin,
+      OPENAI_COMPATIBLE_BASE_URL: ""
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   }));
