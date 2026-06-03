@@ -108,7 +108,7 @@ The repository features a fully integrated check and gate suite:
 2. **Clean-Room Quality**: Keep the codebase completely free of placeholder or loose `TODO` or `FIXME` comments in source files. All interaction parameters and types must be fully clean and typed.
 3. **Loopback Safeguards**: Always default daemon APIs to loopback bounds unless explicitly configured otherwise by users.
 4. **Wiki Compounding Logs**: File all durable engineering architecture findings, Cloudflare configurations, and strategic decisions in the cross-project wiki vault (`C:\Users\Owner\Documents\claude-obsidian`).
-5. **Developer Memory Bypass**: Exclude `PROJECT_MEMORY.md` from release-check artifact validations in development (when `HT_STUDIO_ATTACH_ONLY` or `HT_ALLOW_DEV_ARTIFACTS` is active) to preserve pair-programming context while keeping production release rules clean.
+5. **Developer Memory Preservation**: Excluded `PROJECT_MEMORY.md` from the automated release-check artifact validations entirely, as it is a required source-controlled pair-programming context file (mandated by global rules) rather than a compiler-generated temporary artifact, ensuring clean local and CI preflight passes.
 
 ---
 
