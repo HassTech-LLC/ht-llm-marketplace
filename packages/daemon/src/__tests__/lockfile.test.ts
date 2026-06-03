@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { MarketplaceClient, resolveActiveLockfileUrl } from "@ht-llm-marketplace/sdk";
+import { MarketplaceClient, resolveActiveLockfileUrl } from "../../../sdk/src/index";
 
 describe("Active Daemon Lockfile Registry & Resolution", () => {
   it("MarketplaceClient auto-resolves the apiUrl from active-daemon.json when running in Node", async () => {
