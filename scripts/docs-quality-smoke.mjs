@@ -12,6 +12,7 @@ const requiredFiles = [
   "docs/assets/terminal-demo.webm",
   "docs/assets/terminal-marketplace.svg",
   "docs/assets/embed-surfaces.svg",
+  "docs/assets/repo-banner.svg",
   "docs/proofs/terminal-logs/cli-usability-transcript.txt",
   "docs/universal-integration.md",
   "docs/integration-profiles.md",
@@ -62,6 +63,7 @@ assertNonEmpty("docs/assets/marketplace-demo.webm", 50_000);
 assertNonEmpty("docs/assets/terminal-demo.webm", 20_000);
 assertIncludes("docs/assets/terminal-marketplace.svg", read("docs/assets/terminal-marketplace.svg"), "<svg");
 assertIncludes("docs/assets/embed-surfaces.svg", read("docs/assets/embed-surfaces.svg"), "<svg");
+assertIncludes("docs/assets/repo-banner.svg", read("docs/assets/repo-banner.svg"), "<svg");
 assertIncludes("docs/proofs/terminal-logs/cli-usability-transcript.txt", read("docs/proofs/terminal-logs/cli-usability-transcript.txt"), "node packages/cli/src/index.js status");
 
 const readme = read("README.md");

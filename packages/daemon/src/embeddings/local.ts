@@ -41,7 +41,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 export async function createEmbeddingProvider(): Promise<EmbeddingProvider | undefined> {
-  if (process.env.HT_LLM_ENABLE_EMBEDDINGS !== "1") return undefined;
+  if (process.env.HT_LLM_ENABLE_EMBEDDINGS === "0") return undefined;
   const dimensions = parseEmbeddingDimensions(process.env.HT_LLM_EMBEDDING_DIMENSIONS);
   const backend = process.env.HT_LLM_EMBEDDING_BACKEND || "hash";
   if (backend === "transformers") {

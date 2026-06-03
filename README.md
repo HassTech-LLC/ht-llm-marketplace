@@ -1,5 +1,7 @@
 # HT Local LLM Marketplace
 
+![HT Local LLM Marketplace Banner](docs/assets/repo-banner.svg)
+
 A lightweight local-first LLM marketplace and runtime control plane for terminals, agents, React apps, plain HTML apps, desktop shells, and OpenAI-compatible clients.
 
 [![CI](https://github.com/HassTech-LLC/ht-llm-marketplace/actions/workflows/ci.yml/badge.svg)](https://github.com/HassTech-LLC/ht-llm-marketplace/actions/workflows/ci.yml)
@@ -17,12 +19,13 @@ The repository stays intentionally small. Model files, runtime caches, downloade
 
 ## Quick Start
 
+Get started running the local marketplace and desktop control panel in one command:
+
 ```powershell
-npm install
-npm run studio
+npm install && npm run build && npm run studio
 ```
 
-The Studio dev server starts on `http://127.0.0.1:3000`. The local daemon runs on `http://127.0.0.1:3001`, or slides upward if that port is busy.
+The Studio dev server starts on `http://127.0.0.1:3000`. The local daemon runs on `http://127.0.0.1:3001`, or slides upward if that port is busy. You can also view the live product page at [hasstechapi.com/ht-llm-marketplace/](https://hasstechapi.com/ht-llm-marketplace/).
 
 ```powershell
 npm run release:check

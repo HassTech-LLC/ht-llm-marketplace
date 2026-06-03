@@ -1,5 +1,7 @@
 # HT Local LLM Marketplace Docs
 
+![HT Local LLM Marketplace Banner](assets/repo-banner.svg)
+
 The documentation is organized around the product surfaces developers actually use: terminal, SDK, React, Web Component, daemon, Studio, and local release workflows.
 
 ## Start Here

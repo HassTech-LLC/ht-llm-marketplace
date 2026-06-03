@@ -650,26 +650,17 @@ export function createServer(context: RuntimeContext) {
 
       if (route === "POST /v1/embeddings") {
         const body = requireObject<Record<string, unknown>>(await readJson<unknown>(request, 512_000));
-        const provider = await context.embeddings;
-        if (!provider) {
-          const delegated = await delegatedBackend(context, { autoStart: false, model: typeof body.model === "string" ? body.model : undefined });
-          if (delegated && "endpoint" in delegated) {
-            return proxyJsonRequest(request, response, `${delegated.endpoint}/v1/embeddings`, body);
-          }
-          return json(
-            response,
-            {
-              error: {
-                message: "Local embeddings are not enabled.",
-                type: "not_implemented",
-                code: "local_embeddings_unavailable"
-              }
-            },
-            501
-          );
-        }
         const input = normalizeEmbeddingInput(body.input as LocalEmbeddingRequest["input"]);
         const dimensions = optionalClampedInt(body.dimensions, "dimensions", 1, 8192);
+        const delegated = await delegatedBackend(context, { autoStart: false, model: typeof body.model === "string" ? body.model : undefined });
+        if (delegated && "endpoint" in delegated) {
+          const handled = await proxyEmbeddingRequestOrFallback(request, response, `${delegated.endpoint}/v1/embeddings`, body);
+          if (handled) return;
+        }
+        const provider = await context.embeddings;
+        if (!provider) {
+          return unsupportedEmbeddings(response);
+        }
         const result = await provider.embed(input, { dimensions });
         const base64 = body.encoding_format === "base64";
         return json(response, {
@@ -1790,6 +1781,22 @@ async function proxyJsonRequest(request: http.IncomingMessage, response: http.Se
   const text = await responseTextWithLimit(upstream, DELEGATED_JSON_RESPONSE_LIMIT);
   response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "application/json" });
   response.end(text);
+}
+
+async function proxyEmbeddingRequestOrFallback(request: http.IncomingMessage, response: http.ServerResponse, url: string, body: unknown) {
+  const upstream = await delegatedPostJson(request, url, body);
+  const text = await responseTextWithLimit(upstream, DELEGATED_JSON_RESPONSE_LIMIT);
+  if (upstream.ok || !isUnsupportedDelegatedEmbeddingResponse(upstream.status, text)) {
+    response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "application/json" });
+    response.end(text);
+    return true;
+  }
+  return false;
+}
+
+function isUnsupportedDelegatedEmbeddingResponse(status: number, text: string) {
+  if (![404, 501].includes(status)) return false;
+  return /embed|embedding|not[ _-]?implemented|not[ _-]?supported|not found/i.test(text);
 }
 
 const DELEGATED_REQUEST_TIMEOUT_MS = 120_000;
@@ -3058,6 +3065,20 @@ function serveWidget(pathname: string, response: http.ServerResponse) {
 function json(response: http.ServerResponse, payload: unknown, status = 200) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function unsupportedEmbeddings(response: http.ServerResponse) {
+  return json(
+    response,
+    {
+      error: {
+        message: "Local embeddings are disabled.",
+        type: "not_implemented",
+        code: "local_embeddings_unavailable"
+      }
+    },
+    501
+  );
 }
 
 export async function readJson<T>(request: http.IncomingMessage, maxBytes = JSON_BODY_LIMIT_BYTES): Promise<T> {
