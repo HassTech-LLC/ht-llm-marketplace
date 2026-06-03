@@ -21,6 +21,7 @@ The product boundary is intentionally small: this repo contains the control plan
 | Terminal surface proof | [`assets/terminal-marketplace.svg`](assets/terminal-marketplace.svg) |
 | Terminal screenshot proof | [`assets/terminal-usability.png`](assets/terminal-usability.png) |
 | Terminal video proof | [`assets/terminal-demo.webm`](assets/terminal-demo.webm) |
+| GitHub social preview and share card | [`assets/github-social-preview.png`](assets/github-social-preview.png) |
 | Real CLI transcript | [`proofs/terminal-logs/cli-usability-transcript.txt`](proofs/terminal-logs/cli-usability-transcript.txt) |
 | System doctor evidence | [`proofs/terminal-logs/terminal-doctor-scan.json`](proofs/terminal-logs/terminal-doctor-scan.json) |
 | Verification summary example | [`proofs/terminal-logs/peak-preflight-log.txt`](proofs/terminal-logs/peak-preflight-log.txt) |

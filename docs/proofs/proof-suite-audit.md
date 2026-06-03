@@ -16,6 +16,7 @@ Visual proof assets are canonical under [`../assets`](../assets):
 - [`../assets/terminal-usability.png`](../assets/terminal-usability.png)
 - [`../assets/terminal-demo.webm`](../assets/terminal-demo.webm)
 - [`../assets/embed-surfaces.svg`](../assets/embed-surfaces.svg)
+- [`../assets/github-social-preview.png`](../assets/github-social-preview.png)
 
 Supplemental proof material stays under this folder:
 

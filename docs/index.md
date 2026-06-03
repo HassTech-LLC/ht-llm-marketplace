@@ -25,6 +25,7 @@ The documentation is organized around the product surfaces developers actually u
 | Terminal flow | ![Terminal flow](assets/terminal-marketplace.svg) |
 | Terminal usability | ![Terminal usability](assets/terminal-usability.png) |
 | Embed architecture | ![Embed surfaces](assets/embed-surfaces.svg) |
+| GitHub social preview | [Social preview PNG](assets/github-social-preview.png) |
 | Studio video | [Studio walkthrough](assets/marketplace-demo.webm) |
 | Terminal video | [CLI usability walkthrough](assets/terminal-demo.webm) |
 | Terminal transcript | [CLI transcript](proofs/terminal-logs/cli-usability-transcript.txt) |

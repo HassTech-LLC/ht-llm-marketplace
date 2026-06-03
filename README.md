@@ -149,6 +149,7 @@ Videos:
 
 - [Studio walkthrough](docs/assets/marketplace-demo.webm)
 - [Terminal usability walkthrough](docs/assets/terminal-demo.webm)
+- [GitHub social preview image](docs/assets/github-social-preview.png)
 
 ## Architecture
 
