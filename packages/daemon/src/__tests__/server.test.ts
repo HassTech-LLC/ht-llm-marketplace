@@ -1526,6 +1526,13 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
         running: true,
         endpoint: "http://127.0.0.1:8080"
       });
+      const localEmbed = vi.fn().mockResolvedValue({ model: "local-test-embed", vectors: [[9, 9]], tokenEstimate: 1, dimensions: 2 });
+      mockContext.embeddings = Promise.resolve({
+        id: "local-test",
+        model: "local-test-embed",
+        dimensions: 2,
+        embed: localEmbed
+      });
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }), {
           status: 200,
@@ -1548,6 +1555,53 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
           expect.objectContaining({ method: "POST" })
         );
         expect(JSON.parse(res.body).data[0].embedding).toEqual([0.1, 0.2]);
+        expect(localEmbed).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("POST /v1/embeddings falls back locally when delegated endpoint does not support embeddings", async () => {
+      const mockContext = createMockContext();
+      mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+        backend: "delegated-server",
+        delegatedServer: { enabled: true, port: 8080 }
+      });
+      mockContext.llamaServer.status = vi.fn().mockReturnValue({
+        available: true,
+        running: true,
+        endpoint: "http://127.0.0.1:8080"
+      });
+      const embed = vi.fn().mockResolvedValue({ model: "local-test-embed", vectors: [[0.3, 0.4]], tokenEstimate: 1, dimensions: 2 });
+      mockContext.embeddings = Promise.resolve({
+        id: "local-test",
+        model: "local-test-embed",
+        dimensions: 2,
+        embed
+      });
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: "embeddings not implemented" } }), {
+          status: 501,
+          headers: { "content-type": "application/json" }
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const server = createServer(mockContext);
+        const handler = (server as any)._events.request;
+        const req = createMockRequest("POST", "/v1/embeddings", { input: "hello", model: "phi-3" });
+        const res = createMockResponse();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8080/v1/embeddings",
+          expect.objectContaining({ method: "POST" })
+        );
+        expect(embed).toHaveBeenCalledWith(["hello"], { dimensions: undefined });
+        expect(JSON.parse(res.body).data[0].embedding).toEqual([0.3, 0.4]);
       } finally {
         vi.unstubAllGlobals();
       }

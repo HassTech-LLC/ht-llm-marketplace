@@ -129,6 +129,7 @@ Before publishing packages:
 
 ```powershell
 npm run release:preflight
+npm run release:fde-check
 npm run publish:dry-run
 ```
 
@@ -144,8 +145,9 @@ The external smoke installs packed tarballs into `artifacts/package-smoke`, impo
 `npm run smoke:cli-marketplace` additionally verifies terminal catalog search, file listing, download listing, artifact verification, artifact reveal, artifact load, and project-target initialization against a fake daemon.
 `npm run smoke:universal` verifies the universal target matrix, auto-detection for representative host projects, and the sample snippets under `examples/universal`.
 `npm run smoke:consumer` creates a temporary consumer project outside the repo, installs the local release tarballs, starts the packaged daemon, verifies CLI initialization/status/profile commands, and checks the packaged Web Component widget route.
+`npm run release:fde-check` is the single command for resume/customer proof: it includes the release gate, live runtime quality gates, delegated server proof, managed server pool proof, clean-room consumer install, publish dry-run, GPU proof, and Docker smoke. Use `npm run release:fde-check:ci` when Docker must be mandatory.
 
-The remaining launch-distribution work is tracked in [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md). Use that plan to close Docker proof, remote CI observation, release publishing, and clean-room consumer validation before calling the marketplace public-ready.
+The remaining launch-distribution work is tracked in [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md). Use that plan for remote CI observation and real npm publishing; Docker proof is mandatory through `release:fde-check:ci` on Docker-capable machines.
 
 ## Local Release Bundle
 

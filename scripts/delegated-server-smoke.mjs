@@ -130,8 +130,8 @@ try {
 
   const embeddingStatus = await status("POST", "/v1/embeddings", { model: model.name, input: "hello" }, 120_000);
   checks.push({
-    name: "embeddings-no-crash",
-    ok: embeddingStatus.status < 500 || embeddingStatus.status === 501,
+    name: "embeddings-success",
+    ok: embeddingStatus.status === 200,
     status: embeddingStatus.status,
   });
 

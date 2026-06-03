@@ -16,13 +16,15 @@ Supported routes:
 - `GET /v1/responses/{id}`
 - `POST /v1/embeddings`
 
-`/v1/embeddings` returns `501` until local embeddings are enabled:
+`/v1/embeddings` proxies a running delegated `llama-server` first. If that server does not support embeddings, the daemon falls back to deterministic zero-dependency local hash embeddings by default. Use this as an API-compatibility fallback, not as a claim of semantic embedding-model quality.
 
 ```powershell
-$env:HT_LLM_ENABLE_EMBEDDINGS="1"
-$env:HT_LLM_EMBEDDING_BACKEND="hash"
+$env:HT_LLM_EMBEDDING_BACKEND="hash" # default
+# $env:HT_LLM_ENABLE_EMBEDDINGS="0" # explicit opt-out
 npm run start:daemon
 ```
+
+For semantic local embeddings, install a compatible Transformers.js backend and set `HT_LLM_EMBEDDING_BACKEND=transformers`.
 
 ## Ollama-Compatible Clients
 

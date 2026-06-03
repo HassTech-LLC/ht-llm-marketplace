@@ -73,7 +73,7 @@ const docsIndex = read("docs/index.md");
 for (const marker of docsIndexMarkers) assertIncludes("docs/index.md", docsIndex, marker);
 
 const pkg = JSON.parse(read("package.json"));
-for (const script of ["smoke:docs", "smoke:universal", "smoke:cli-marketplace", "release:check", "bundle:local", "docs:assets", "docs:terminal"]) {
+for (const script of ["smoke:docs", "smoke:universal", "smoke:cli-marketplace", "release:check", "release:fde-check", "bundle:local", "docs:assets", "docs:terminal"]) {
   if (!pkg.scripts?.[script]) throw new Error(`package.json missing script ${script}`);
 }
 if (!pkg.scripts["release:check"].includes("smoke:docs")) {

@@ -81,6 +81,8 @@ npm run smoke:marketplace
 npm run smoke:studio
 npm run check:compatibility
 npm run release:check
+npm run release:fde-check
 ```
 
 `npm run release:check` is the primary local gate before pushing public-facing repo changes.
+`npm run release:fde-check` is the stronger resume/customer proof gate. It reruns release checks plus live server quality, delegated `llama-server`, managed pool, clean-room consumer install, publish dry-run, GPU proof, and Docker smoke. Use `npm run release:fde-check:ci` when Docker must be mandatory.

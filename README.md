@@ -29,10 +29,12 @@ The Studio dev server starts on `http://127.0.0.1:3000`. The local daemon runs o
 
 ```powershell
 npm run release:check
+npm run release:fde-check
 npm run bundle:local
 ```
 
 `release:check` runs type checks, unit tests, compatibility smoke tests, docs checks, browser smoke, package dry-runs, package smoke, and artifact cleanliness checks.
+`release:fde-check` adds the resume/customer proof path: server quality, replacement gauntlet, delegated `llama-server`, managed server pool, clean-room consumer install, publish dry-run, GPU proof, and Docker smoke. Local Docker is optional; use `npm run release:fde-check:ci` on a Docker-capable machine when Docker proof must be mandatory.
 
 ## Use It In Another Project
 
@@ -198,9 +200,10 @@ npm run smoke:universal
 npm run smoke:packages
 npm run check:artifacts
 npm run release:check
+npm run release:fde-check
 ```
 
-CI runs the full release gate on `main` and pull requests. The release workflow also supports package dry-runs and local bundle verification.
+CI runs the full release gate on `main` and pull requests. Use `release:fde-check` before resume/public-proof updates, and `release:fde-check:ci` when Docker CLI is available and Docker proof is required.
 
 ## Documentation
 

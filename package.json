@@ -75,6 +75,8 @@
     "publish:dry-run": "node scripts/npm-publish-dry-run.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:preflight:ci": "node scripts/release-preflight.mjs --docker-required",
+    "release:fde-check": "node scripts/fde-readiness-check.mjs",
+    "release:fde-check:ci": "node scripts/fde-readiness-check.mjs --docker-required",
     "ci:status": "node scripts/ci-status.mjs",
     "engine:lean": "node scripts/lean-engine.mjs",
     "engine:gpu-proof": "node scripts/llama-gpu-proof.mjs",

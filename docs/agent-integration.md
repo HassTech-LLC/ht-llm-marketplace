@@ -26,7 +26,7 @@ Supported local routes include:
 - `POST /v1/chat/completions`
 - `POST /v1/completions`
 - `POST /v1/responses`
-- `POST /v1/embeddings` with stable unsupported behavior when embeddings are unavailable
+- `POST /v1/embeddings` with delegated-server proxying and deterministic local hash fallback by default
 - Ollama-style `GET /api/tags`, `POST /api/generate`, `POST /api/show`, `GET /api/ps`
 
 ## Marketplace Lifecycle For Agents
