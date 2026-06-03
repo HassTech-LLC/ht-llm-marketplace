@@ -66,7 +66,12 @@ async function startLocalStack() {
   const api = new URL(apiUrl);
   const studio = new URL(studioUrl);
   children.push(spawnLogged("daemon", process.execPath, ["packages/daemon/dist/index.js"], {
-    env: { ...process.env, HT_MARKETPLACE_PORT: api.port, HT_MARKETPLACE_HOST: api.hostname },
+    env: {
+      ...process.env,
+      HT_MARKETPLACE_PORT: api.port,
+      HT_MARKETPLACE_HOST: api.hostname,
+      HT_MARKETPLACE_ALLOWED_ORIGINS: studio.origin
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   }));
