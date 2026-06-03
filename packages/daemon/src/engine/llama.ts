@@ -1,63 +1,19 @@
 import os from "node:os";
 import path from "node:path";
+import fs from "node:fs";
+import { createServer } from "node:net";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { RuntimeModel, RuntimeStatus } from "@ht-llm-marketplace/sdk";
 import { planChat, type ChatMessage } from "./messages.js";
+import {
+  LlamaServerManager,
+  llamaServerManagedRoot,
+  installManagedLlamaServer,
+  findLlamaServerBinary
+} from "../runtime/llama-server.js";
 
-// Minimal structural types for the slice of `node-llama-cpp` we use. We keep our
-// own interfaces (instead of importing the package's types directly) so the
-// daemon compiles and the engine stays unit-testable even when the native
-// binary is not installed. The real module is cast to this shape at load time.
-export interface LlamaModelTokenizerLike {
-  // node-llama-cpp v3's LlamaModel exposes `tokenize(text)` synchronously and
-  // returns an array of opaque Token values; we only need `.length`.
-  tokenize(text: string, specialTokens?: boolean): { length: number };
-}
-
-export interface LlamaChatSessionLike {
-  prompt(
-    text: string,
-    options?: {
-      onTextChunk?: (chunk: string) => void;
-      signal?: AbortSignal;
-      stopOnAbortSignal?: boolean;
-      temperature?: number;
-      topK?: number;
-      topP?: number;
-      maxTokens?: number;
-    }
-  ): Promise<string>;
-  setChatHistory(history: any[]): void;
-  getChatHistory(): any[];
-  readonly model?: LlamaModelTokenizerLike;
-}
-
-export interface ContextLike {
-  getSequence(): unknown;
-  dispose?(): Promise<void>;
-}
-
-export interface ModelLike {
-  createContext(options?: { contextSize?: number; threads?: number; flashAttention?: boolean }): Promise<ContextLike>;
-  dispose(): Promise<void>;
-}
-
-export interface LlamaLike {
-  gpu: string | false;
-  loadModel(options: { modelPath: string; gpuLayers?: number }): Promise<ModelLike>;
-}
-
-export interface LlamaModuleLike {
-  getLlama(options?: "lastBuild" | { gpu?: string | false }): Promise<LlamaLike>;
-  LlamaChatSession: new (options: { contextSequence: unknown; systemPrompt?: string }) => LlamaChatSessionLike;
-  readGgufFileInfo?(pathOrUri: string): Promise<unknown>;
-  DraftSequenceTokenPredictor: any;
-}
-
-export type LlamaModuleLoader = () => Promise<LlamaModuleLike>;
-
-export interface LlamaEngineOptions {
-  loader?: LlamaModuleLoader;
-}
+const execFileAsync = promisify(execFile);
 
 export interface LoadModelOptions {
   modelPath: string;
@@ -76,96 +32,159 @@ export interface EngineUsage {
 
 export interface EngineChatOptions {
   onToken?: (chunk: string) => void;
-  /**
-   * Called once per chat() with real token counts. Emitted after generation
-   * finishes (including the virtual SSM path). Lets callers populate the
-   * OpenAI-compat `usage` block with real numbers instead of zeros.
-   */
   onUsage?: (usage: EngineUsage) => void;
   signal?: AbortSignal;
   temperature?: number;
   maxTokens?: number;
 }
 
-const defaultLoader: LlamaModuleLoader = async () => {
-  // `node-llama-cpp` is an OPTIONAL dependency (the heavy native engine). The
-  // specifier is widened to `string` so tsc does not statically require it —
-  // the daemon builds and boots in lightweight mode without the engine, and
-  // probe()/ensureModule() report it unavailable instead of crashing.
-  const enginePackage = "node-llama-cpp" as string;
-  return (await import(enginePackage)) as unknown as LlamaModuleLike;
-};
+function getStorageDir(): string {
+  return (
+    process.env.HT_MARKETPLACE_HOME ||
+    process.env.HT_STUDIO_HOME ||
+    path.join(
+      process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"),
+      "HT LLM Marketplace"
+    )
+  );
+}
 
-/**
- * Dispose a model, but never block longer than `timeoutMs` — node-llama-cpp's
- * native dispose can hang on some GPU backends, and we must not wedge the engine.
- */
-async function disposeWithTimeout(model: ModelLike, timeoutMs = 8000): Promise<void> {
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    const timer = setTimeout(finish, timeoutMs);
-    (timer as { unref?: () => void }).unref?.();
-    Promise.resolve(model.dispose())
-      .catch(() => undefined)
-      .finally(() => {
-        clearTimeout(timer);
-        finish();
+async function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "string" ? 0 : address?.port ?? 0;
+      server.close(() => {
+        resolve(port);
       });
+    });
   });
 }
 
-async function disposeContext(context: ContextLike | undefined): Promise<void> {
-  if (typeof context?.dispose !== "function") return;
+async function getFreeVram(): Promise<number> {
   try {
-    await context.dispose();
+    const { stdout } = await execFileAsync("nvidia-smi", [
+      "--query-gpu=memory.free",
+      "--format=csv,noheader,nounits"
+    ], { timeout: 5000, windowsHide: true });
+    if (!stdout) return 0;
+    const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    let totalFree = 0;
+    for (const line of lines) {
+      const val = Number.parseFloat(line);
+      if (Number.isFinite(val)) {
+        totalFree += val * 1024 * 1024;
+      }
+    }
+    return totalFree;
   } catch {
-    // Context disposal is best-effort; model disposal remains the authoritative cleanup.
+    return 0;
   }
 }
 
-/**
- * In-process llama.cpp inference engine. Lets the daemon load and run GGUF
- * models itself, with no dependency on Ollama or LM Studio being installed.
- */
+async function scanNvidiaGpus(): Promise<{ name: string }[]> {
+  try {
+    const { stdout } = await execFileAsync("nvidia-smi", [
+      "--query-gpu=name",
+      "--format=csv,noheader"
+    ], { timeout: 5000, windowsHide: true });
+    if (!stdout) return [];
+    return stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(name => ({ name }));
+  } catch {
+    return [];
+  }
+}
+
+async function calculateGpuLayers(modelPath: string, contextSize: number): Promise<number> {
+  try {
+    if (!fs.existsSync(modelPath)) return 32;
+    const sizeBytes = fs.statSync(modelPath).size;
+    const freeVram = await getFreeVram();
+    if (freeVram <= 0) return 0;
+
+    let estimatedLayers = 32;
+    if (sizeBytes >= 40_000_000_000) {
+      estimatedLayers = 80;
+    } else if (sizeBytes >= 20_000_000_000) {
+      estimatedLayers = 60;
+    } else if (sizeBytes >= 10_000_000_000) {
+      estimatedLayers = 40;
+    }
+
+    const layerSize = sizeBytes / estimatedLayers;
+    const kvCacheBudget = contextSize * 256 * 1024;
+    const systemBuffer = 768 * 1024 * 1024;
+    const availableForWeights = freeVram - kvCacheBudget - systemBuffer;
+
+    if (availableForWeights <= 0) return 0;
+
+    const layersToOffload = Math.max(0, Math.min(estimatedLayers, Math.floor(availableForWeights / layerSize)));
+    if (layersToOffload >= estimatedLayers - 2) {
+      return 999;
+    }
+    return layersToOffload;
+  } catch {
+    return 32;
+  }
+}
+
+async function waitForEndpointHealth(endpoint: string, stillCurrent: () => boolean, timeoutMs = 90_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!stillCurrent()) throw new Error("llama-server process exited before becoming healthy.");
+    try {
+      const response = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return;
+    } catch {
+      // loading
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`llama-server did not become healthy within ${timeoutMs}ms.`);
+}
+
 export class LlamaEngine {
   readonly id = "llamacpp" as const;
-
-  private readonly loader: LlamaModuleLoader;
-  private module?: LlamaModuleLike;
-  private llama?: LlamaLike;
-  private model?: ModelLike;
-  private session?: LlamaChatSessionLike;
-  private draftModel?: ModelLike;
-  private loadedPathValue?: string;
-  private loadedDraftPathValue?: string;
-  private loadedName?: string;
-  private systemPrompt?: string;
-  private context?: ContextLike;
-  private draftContext?: ContextLike;
-  private lastMessagesLength = 0;
-
-  private contextSize?: number;
-  private threads?: number;
-  private isVirtualSSM = false;
 
   available = false;
   gpu: string | false = false;
   lastError?: string;
   private busy = false;
 
-  constructor(options: LlamaEngineOptions = {}) {
-    this.loader = options.loader ?? defaultLoader;
-  }
+  private manager?: LlamaServerManager;
+  private loadedPathValue?: string;
+  private loadedName?: string;
+  private isVirtualSSM = false;
+  private lastMessagesLength = 0;
+  private endpoint?: string;
 
-  /** Attempt to initialize the native binding once, recording availability. */
+  constructor() {}
+
   async probe(): Promise<{ available: boolean; gpu: string | false; error?: string }> {
     try {
-      await this.ensureLlama();
+      const storageDir = getStorageDir();
+      const root = llamaServerManagedRoot(storageDir);
+      let existing = findLlamaServerBinary([root], "");
+      if (!existing) {
+        const gpus = await scanNvidiaGpus();
+        const flavor = gpus.length > 0 ? "cuda" : "cpu";
+        const res = await installManagedLlamaServer(storageDir, { flavor });
+        if (res.ok && res.binaryPath) {
+          existing = res.binaryPath;
+        }
+      }
+      if (existing) {
+        this.available = true;
+        const gpus = await scanNvidiaGpus();
+        this.gpu = gpus.length > 0 ? gpus[0].name : false;
+        this.lastError = undefined;
+      } else {
+        this.available = false;
+        this.lastError = "No llama-server binary could be found or installed.";
+      }
     } catch (error) {
       this.available = false;
       this.lastError = (error as Error).message;
@@ -174,13 +193,13 @@ export class LlamaEngine {
   }
 
   isLoaded(modelPath?: string): boolean {
-    if (this.loadedPathValue?.startsWith("virtual:")) {
+    if (this.isVirtualSSM) {
       if (!modelPath) return true;
-      return modelPath === this.loadedPathValue;
+      return modelPath === "virtual:ternary-ssm-specialist";
     }
-    if (!this.session) return false;
+    if (!this.manager || !this.loadedPathValue) return false;
     if (!modelPath) return true;
-    return this.normalize(modelPath) === this.normalize(this.loadedPathValue || "");
+    return path.resolve(modelPath).toLowerCase() === path.resolve(this.loadedPathValue).toLowerCase();
   }
 
   get loadedModel(): string | undefined {
@@ -191,150 +210,114 @@ export class LlamaEngine {
     return this.loadedPathValue;
   }
 
-  /** Best-effort read of a GGUF's `general.architecture` (for preflight checks). */
   async readArchitecture(modelPath: string): Promise<string | undefined> {
     if (modelPath.startsWith("virtual:")) return "llama";
     try {
-      const module = await this.ensureModule();
-      if (typeof module.readGgufFileInfo !== "function") return undefined;
-      const info = (await module.readGgufFileInfo(modelPath)) as {
-        architectureMetadata?: { general?: { architecture?: string } };
-        metadata?: { general?: { architecture?: string } };
-      };
-      return info?.architectureMetadata?.general?.architecture ?? info?.metadata?.general?.architecture;
+      const fd = fs.openSync(modelPath, "r");
+      const buffer = Buffer.alloc(65536);
+      fs.readSync(fd, buffer, 0, 65536, 0);
+      fs.closeSync(fd);
+      const content = buffer.toString("utf8");
+      if (content.includes("llama")) return "llama";
+      if (content.includes("gemma")) return "gemma";
+      if (content.includes("command-r")) return "command-r";
+      if (content.includes("qwen")) return "qwen";
+      return "llama";
     } catch {
-      return undefined;
+      return "llama";
     }
   }
 
   async load(options: LoadModelOptions): Promise<{ loaded: string; gpu: string | false }> {
     if (options.modelPath.startsWith("virtual:")) {
-      const previousModel = this.model;
-      this.model = undefined;
-      this.session = undefined;
-      this.context = undefined;
-      this.draftContext = undefined;
-      this.lastMessagesLength = 0;
-      this.isVirtualSSM = options.modelPath === "virtual:ternary-ssm-specialist";
+      await this.unload();
+      this.isVirtualSSM = true;
       this.loadedPathValue = options.modelPath;
       this.loadedName = options.displayName || "Virtual-Model";
-      this.systemPrompt = options.systemPrompt;
-      this.contextSize = options.contextSize;
-      this.threads = options.threads;
-      if (previousModel) await disposeWithTimeout(previousModel);
-      return { loaded: this.loadedName, gpu: options.modelPath.includes("ollama") ? "Ollama Fallback" : "Vulkan Virtual core" };
+      return { loaded: this.loadedName, gpu: "Vulkan Virtual core" };
     }
 
-    const module = await this.ensureModule();
-    const llama = await this.ensureLlama();
+    await this.probe();
+    if (!this.available) {
+      throw new Error(this.lastError || "llama-server is not available.");
+    }
+
+    const port = await findFreePort();
+    this.endpoint = `http://127.0.0.1:${port}`;
+
+    const storageDir = getStorageDir();
+    const root = llamaServerManagedRoot(storageDir);
+    const binaryPath = findLlamaServerBinary([root], "");
+    if (!binaryPath) {
+      throw new Error("llama-server binary not found.");
+    }
+
+    let gpuLayers = options.gpuLayers;
+    if (gpuLayers === undefined || gpuLayers === null) {
+      gpuLayers = await calculateGpuLayers(options.modelPath, options.contextSize || 2048);
+    }
 
     const physicalCores = Math.min(8, Math.max(1, Math.floor(os.cpus().length / 2)));
     const threads = options.threads || physicalCores;
 
-    let nextDraftModel: ModelLike | undefined = undefined;
-    let nextDraftContext: ContextLike | undefined = undefined;
-    let draftContextSequence: any = undefined;
+    const extraArgs = [
+      "--ctx-size", String(options.contextSize || 2048),
+      "--threads", String(threads),
+      "--ngl", String(gpuLayers)
+    ];
 
     if (options.draftModelPath) {
-      try {
-        nextDraftModel = await llama.loadModel({ modelPath: options.draftModelPath, gpuLayers: options.gpuLayers });
-        nextDraftContext = await nextDraftModel.createContext({
-          contextSize: options.contextSize || 2048,
-          threads: threads,
-          flashAttention: true
-        });
-        draftContextSequence = nextDraftContext.getSequence();
-      } catch (err) {
-        console.error("Failed to load draft model for speculative decoding:", err);
-      }
+      extraArgs.push("--model-draft", options.draftModelPath);
     }
 
-    const nextModel = await llama.loadModel({ modelPath: options.modelPath, gpuLayers: options.gpuLayers });
-    const context = await nextModel.createContext({
-      contextSize: options.contextSize || 2048,
-      threads: threads,
-      flashAttention: true
+    const manager = new LlamaServerManager({
+      binaryPath,
+      modelPath: options.modelPath,
+      port,
+      parallel: 4,
+      continuousBatching: true,
+      extraArgs
     });
 
-    const contextSequence = nextDraftContext && draftContextSequence
-      ? (context as any).getSequence({
-          tokenPredictor: new module.DraftSequenceTokenPredictor(draftContextSequence)
-        })
-      : context.getSequence();
+    const status = await manager.start();
+    if (!status.running) {
+      throw new Error(`Failed to start llama-server: ${status.message}`);
+    }
 
-    const nextSession = new module.LlamaChatSession({
-      contextSequence,
-      systemPrompt: options.systemPrompt
+    await waitForEndpointHealth(this.endpoint, () => {
+      const cur = manager.status();
+      return Boolean(cur.running);
     });
 
-    const previousModel = this.model;
-    const previousDraftModel = this.draftModel;
-    const previousContext = this.context;
-    const previousDraftContext = this.draftContext;
-
-    this.model = nextModel;
-    this.context = context;
-    this.session = nextSession;
-    this.draftModel = nextDraftModel;
-    this.draftContext = nextDraftContext;
+    const previousManager = this.manager;
+    this.manager = manager;
     this.loadedPathValue = options.modelPath;
-    this.loadedDraftPathValue = options.draftModelPath;
     this.loadedName = options.displayName || path.basename(options.modelPath);
-    this.systemPrompt = options.systemPrompt;
-    this.contextSize = options.contextSize;
-    this.threads = options.threads;
     this.isVirtualSSM = false;
     this.lastMessagesLength = 0;
 
-    if (previousModel) await disposeWithTimeout(previousModel);
-    if (previousDraftModel) await disposeWithTimeout(previousDraftModel);
-    await disposeContext(previousContext);
-    await disposeContext(previousDraftContext);
+    if (previousManager) {
+      await previousManager.stop().catch(() => undefined);
+    }
 
     return { loaded: this.loadedName, gpu: this.gpu };
   }
 
   async unload(timeoutMs = 8000): Promise<void> {
-    const model = this.model;
-    const draftModel = this.draftModel;
-    const context = this.context;
-    const draftContext = this.draftContext;
-    // Clear references up front so the engine immediately reports "unloaded"
-    // and a slow/hanging native dispose can never wedge the next load.
-    this.model = undefined;
-    this.context = undefined;
-    this.session = undefined;
-    this.draftModel = undefined;
-    this.draftContext = undefined;
+    const manager = this.manager;
+    this.manager = undefined;
     this.loadedPathValue = undefined;
-    this.loadedDraftPathValue = undefined;
     this.loadedName = undefined;
-    this.systemPrompt = undefined;
-    this.contextSize = undefined;
-    this.threads = undefined;
     this.isVirtualSSM = false;
     this.lastMessagesLength = 0;
-    if (model) await disposeWithTimeout(model, timeoutMs);
-    if (draftModel) await disposeWithTimeout(draftModel, timeoutMs);
-    await disposeContext(context);
-    await disposeContext(draftContext);
+    this.endpoint = undefined;
+    if (manager) {
+      await manager.stop().catch(() => undefined);
+    }
   }
 
-  /**
-   * Estimate token count for `text` using the loaded model's tokenizer when
-   * available; falls back to a ~4 chars/token heuristic when the native
-   * tokenizer isn't reachable (virtual SSM mode, tests, unloaded model).
-   */
   private countTokens(text: string): number {
     if (!text) return 0;
-    try {
-      const tokenizer = this.session?.model;
-      if (tokenizer && typeof tokenizer.tokenize === "function") {
-        return tokenizer.tokenize(text).length;
-      }
-    } catch {
-      // Fall through to heuristic.
-    }
     return Math.max(1, Math.ceil(text.length / 4));
   }
 
@@ -398,99 +381,110 @@ export class LlamaEngine {
       }
     }
 
-    if (!this.session) {
+    if (!this.manager || !this.endpoint) {
       throw new Error("No model is loaded in HT Studio Engine. Load a model first.");
     }
     if (this.busy) {
       throw new Error("HT Studio Engine is already generating a response. One request at a time.");
     }
 
-    const plan = planChat(messages);
-    const isFirstTurn = this.lastMessagesLength === 0;
-    const isNewConversation = !isFirstTurn && (messages.length < this.lastMessagesLength || messages.length <= 2);
-    const nextSystemPrompt = plan.systemPrompt || "";
-    const systemPromptChanged = nextSystemPrompt !== (this.systemPrompt || "");
-    this.lastMessagesLength = messages.length;
-
-    if (!this.session || isNewConversation || systemPromptChanged) {
-      await this.rebuildSession(nextSystemPrompt);
-    }
-
-    // Sync full conversation history (excluding the current user prompt) to LlamaChatSession
-    const lastUserIndex = [...messages].reverse().findIndex((m) => m.role === "user");
-    if (lastUserIndex !== -1 && this.session) {
-      const absoluteLastUserIndex = messages.length - 1 - lastUserIndex;
-      const historyMessages = messages.slice(0, absoluteLastUserIndex);
-      const nativeHistory = historyMessages.map((m) => {
-        if (m.role === "system") {
-          return { type: "system" as const, text: m.content };
-        } else if (m.role === "user") {
-          return { type: "user" as const, text: m.content };
-        } else {
-          return { type: "model" as const, response: [m.content] };
-        }
+    this.busy = true;
+    try {
+      const plan = planChat(messages);
+      const promptTokens = this.countTokens(plan.prompt);
+      
+      const url = `${this.endpoint}/v1/chat/completions`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          messages: messages.map(m => ({ role: m.role, content: m.content })),
+          temperature: options.temperature ?? 0.7,
+          max_tokens: options.maxTokens ?? 2048,
+          stream: true
+        }),
+        signal: options.signal
       });
 
-      let needsSync = false;
-      try {
-        const currentHistory = this.session.getChatHistory();
-        if (currentHistory.length !== nativeHistory.length) {
-          needsSync = true;
-        } else {
-          for (let i = 0; i < nativeHistory.length; i++) {
-            const c = currentHistory[i];
-            const n = nativeHistory[i];
-            if (!c || !n || c.type !== n.type) {
-              needsSync = true;
-              break;
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`llama-server returned status ${response.status}: ${text}`);
+      }
+
+      if (!response.body) {
+        throw new Error("Response body is empty.");
+      }
+
+      let reader: any;
+      if (response.body && typeof (response.body as any)[Symbol.asyncIterator] === "function") {
+        reader = response.body;
+      } else if (response.body && typeof (response.body as any).getReader === "function") {
+        const streamReader = (response.body as any).getReader();
+        reader = {
+          async *[Symbol.asyncIterator]() {
+            try {
+              while (true) {
+                const { done, value } = await streamReader.read();
+                if (done) break;
+                yield value;
+              }
+            } finally {
+              streamReader.releaseLock();
             }
-            if (c.type === "system" || c.type === "user") {
-              if (c.text !== n.text) {
-                needsSync = true;
-                break;
+          }
+        };
+      } else {
+        throw new Error("Response body is not readable.");
+      }
+
+      let replyText = "";
+      let buffer = "";
+
+      for await (const chunk of reader) {
+        buffer += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const cleaned = line.trim();
+          if (!cleaned) continue;
+          if (cleaned === "data: [DONE]") continue;
+          if (cleaned.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(cleaned.slice(6));
+              const content = data.choices?.[0]?.delta?.content;
+              if (content) {
+                replyText += content;
+                options.onToken?.(content);
               }
-            } else if (c.type === "model") {
-              const cRes = Array.isArray((c as any).response) ? (c as any).response.join("") : (typeof (c as any).response === "string" ? (c as any).response : "");
-              const nRes = Array.isArray((n as any).response) ? (n as any).response.join("") : (typeof (n as any).response === "string" ? (n as any).response : "");
-              if (cRes !== nRes) {
-                needsSync = true;
-                break;
-              }
+            } catch {
+              // skip
             }
           }
         }
-      } catch (err) {
-        console.error("Failed to read chat history for comparison:", err);
-        needsSync = true;
       }
 
-      if (needsSync) {
+      if (buffer.trim().startsWith("data: ")) {
         try {
-          this.session.setChatHistory(nativeHistory);
-        } catch (err) {
-          console.error("Failed to sync chat history to node-llama-cpp:", err);
+          const data = JSON.parse(buffer.trim().slice(6));
+          const content = data.choices?.[0]?.delta?.content;
+          if (content) {
+            replyText += content;
+            options.onToken?.(content);
+          }
+        } catch {
+          // skip
         }
       }
-    }
 
-    this.busy = true;
-    try {
-      const promptTokens = this.countTokens(plan.prompt);
-      const responseText = await this.session.prompt(plan.prompt, {
-        onTextChunk: options.onToken,
-        signal: options.signal,
-        stopOnAbortSignal: true,
-        temperature: options.temperature,
-        maxTokens: options.maxTokens
-      });
-      options.onUsage?.({ promptTokens, completionTokens: this.countTokens(responseText) });
-      return responseText;
+      options.onUsage?.({ promptTokens, completionTokens: this.countTokens(replyText) });
+      return replyText;
     } finally {
       this.busy = false;
     }
   }
 
-  /** Map the engine into the shared RuntimeStatus shape used across the UI/SDK. */
   status(ownedModels: RuntimeModel[] = []): RuntimeStatus {
     const notes: string[] = [];
     if (this.isVirtualSSM) {
@@ -503,9 +497,6 @@ export class LlamaEngine {
       );
     } else {
       notes.push(this.gpu ? `Hardware acceleration: ${this.gpu}.` : "Running on CPU.");
-    }
-    if (this.loadedDraftPathValue) {
-      notes.push(`Speculative decoding active: drafted by ${path.basename(this.loadedDraftPathValue)}.`);
     }
     if (this.busy) notes.push("Currently generating a response.");
 
@@ -534,68 +525,5 @@ export class LlamaEngine {
       loadedModels,
       notes
     };
-  }
-
-  private async ensureModule(): Promise<LlamaModuleLike> {
-    if (!this.module) {
-      this.module = await this.loader();
-    }
-    return this.module;
-  }
-
-  private async ensureLlama(): Promise<LlamaLike> {
-    if (!this.llama) {
-      const module = await this.ensureModule();
-      this.llama = await module.getLlama();
-      this.gpu = this.llama.gpu;
-      this.available = true;
-      this.lastError = undefined;
-    }
-    return this.llama;
-  }
-
-  private async rebuildSession(systemPrompt: string): Promise<void> {
-    if (!this.model) return;
-    const module = await this.ensureModule();
-    const previousContext = this.context;
-    const previousDraftContext = this.draftContext;
-    const physicalCores = Math.min(8, Math.max(1, Math.floor(os.cpus().length / 2)));
-    const threads = this.threads || physicalCores;
-
-    this.context = await this.model.createContext({
-      contextSize: this.contextSize || 2048,
-      threads: threads,
-      flashAttention: true
-    });
-
-    let draftContextSequence: any = undefined;
-    if (this.draftModel) {
-      try {
-        this.draftContext = await this.draftModel.createContext({
-          contextSize: this.contextSize || 2048,
-          threads: threads,
-          flashAttention: true
-        });
-        draftContextSequence = this.draftContext.getSequence();
-      } catch (err) {
-        console.error("Failed to rebuild draft context for speculative decoding:", err);
-      }
-    }
-
-    const contextSequence = this.draftContext && draftContextSequence
-      ? (this.context as any).getSequence({
-          tokenPredictor: new module.DraftSequenceTokenPredictor(draftContextSequence)
-        })
-      : this.context.getSequence();
-
-    this.session = new module.LlamaChatSession({ contextSequence, systemPrompt });
-    this.systemPrompt = systemPrompt;
-
-    await disposeContext(previousContext);
-    if (previousDraftContext) await disposeContext(previousDraftContext);
-  }
-
-  private normalize(value: string): string {
-    return path.resolve(value).toLowerCase();
   }
 }
