@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cosineSimilarity, hashTextEmbedding, l2Normalize, normalizeEmbeddingInput, parseEmbeddingDimensions, trimDimensions } from "../local.js";
+import { cosineSimilarity, createEmbeddingProvider, hashTextEmbedding, l2Normalize, normalizeEmbeddingInput, parseEmbeddingDimensions, trimDimensions } from "../local.js";
 
 describe("local embeddings helpers", () => {
   it("normalizes string and array inputs", () => {
@@ -43,4 +43,30 @@ describe("local embeddings helpers", () => {
     expect(() => parseEmbeddingDimensions("0")).toThrow("positive integer");
     expect(() => parseEmbeddingDimensions("wide")).toThrow("positive integer");
   });
+
+  it("creates hash embeddings by default and disables only with an explicit opt-out", async () => {
+    const previousEnabled = process.env.HT_LLM_ENABLE_EMBEDDINGS;
+    const previousBackend = process.env.HT_LLM_EMBEDDING_BACKEND;
+    const previousDimensions = process.env.HT_LLM_EMBEDDING_DIMENSIONS;
+    try {
+      delete process.env.HT_LLM_ENABLE_EMBEDDINGS;
+      delete process.env.HT_LLM_EMBEDDING_BACKEND;
+      process.env.HT_LLM_EMBEDDING_DIMENSIONS = "8";
+      const provider = await createEmbeddingProvider();
+      expect(provider?.id).toBe("local-hash");
+      expect(provider?.dimensions).toBe(8);
+
+      process.env.HT_LLM_ENABLE_EMBEDDINGS = "0";
+      await expect(createEmbeddingProvider()).resolves.toBeUndefined();
+    } finally {
+      restoreEnv("HT_LLM_ENABLE_EMBEDDINGS", previousEnabled);
+      restoreEnv("HT_LLM_EMBEDDING_BACKEND", previousBackend);
+      restoreEnv("HT_LLM_EMBEDDING_DIMENSIONS", previousDimensions);
+    }
+  });
 });
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
