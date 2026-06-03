@@ -1,101 +1,84 @@
-# 📚 HT Local LLM Marketplace Developer Portal
+# HT Local LLM Marketplace Docs
 
-Welcome to the **HT Local LLM Marketplace** developer documentation. This portal is organized to help you integrate, customize, and configure your local-first model supply chain and runtime control plane.
+The documentation is organized around the product surfaces developers actually use: terminal, SDK, React, Web Component, daemon, Studio, and local release workflows.
 
----
+## Start Here
 
-## ⚡ Visual Demonstrations & Media
-
-| Product Surface | Visual Proof & Walkthroughs |
+| Goal | Read |
 | --- | --- |
-| **Marketplace Studio UI (Desktop)** | ![Studio Cockpit Desktop](assets/marketplace-desktop.png) |
-| **Marketplace Studio UI (Mobile)** | ![Studio Cockpit Mobile](assets/marketplace-mobile.png) |
-| **Marketplace Web Component (Embeds)** | ![Embed Surfaces Map](assets/embed-surfaces.svg) |
-| **Terminal Marketplace Flow** | ![Terminal CLI Flow](assets/terminal-marketplace.svg) |
-| **Video: Studio Live Walkthrough** | 🎥 **[Studio Walkthrough Video (assets/marketplace-demo.webm)](assets/marketplace-demo.webm)** |
-| **Video: Terminal CLI Usability** | 🎥 **[CLI Usability Video (assets/terminal-demo.webm)](assets/terminal-demo.webm)** |
-| **Terminal Usability Screenshot** | ![Terminal Usability Proof](assets/terminal-usability.png) |
-| **Terminal Session Transcript** | 📄 **[CLI Transcript (proofs/terminal-logs/cli-usability-transcript.txt)](proofs/terminal-logs/cli-usability-transcript.txt)** |
+| Add the marketplace to another app | [`universal-integration.md`](universal-integration.md) |
+| Pick the smallest useful footprint | [`integration-profiles.md`](integration-profiles.md) |
+| Wire local models to coding or terminal agents | [`agent-integration.md`](agent-integration.md) |
+| Customize branding, labels, colors, and feature flags | [`customization.md`](customization.md) |
+| Review security and local sandboxing | [`security-privacy.md`](security-privacy.md) |
+| Prepare a clean public release | [`open-source.md`](open-source.md) |
+| Understand the GitHub positioning and proof gates | [`github-repo-design.md`](github-repo-design.md) |
 
----
+## Visual Proof
 
-## 🚀 Integration Starting Points
-
-Find the guide corresponding to your product integration goal:
-
-| Your Integration Goal | Read Target Guide |
+| Surface | Evidence |
 | --- | --- |
-| **Add a model marketplace to your existing React app** | [`universal-integration.md`](universal-integration.md) |
-| **Configure a framework-neutral HTML embed** | [`universal-integration.md`](universal-integration.md) |
-| **Choose the correct application footprint profile** | [`integration-profiles.md`](integration-profiles.md) |
-| **Wire a local LLM backend to coding or terminal agents** | [`agent-integration.md`](agent-integration.md) |
-| **Customize themes, tokens, feature flags, or branding** | [`customization.md`](customization.md) |
-| **Observe local sandboxing, CORS, and loopback safety guards** | [`security-privacy.md`](security-privacy.md) |
-| **Build a local release bundle or package for NPM** | [`open-source.md`](open-source.md) |
-| **Review repository footprint claims & topics** | [`github-repo-design.md`](github-repo-design.md) |
-| **Resolve remaining launch issues & Docker templates** | [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md) |
+| Studio desktop | ![Studio desktop](assets/marketplace-desktop.png) |
+| Studio mobile | ![Studio mobile](assets/marketplace-mobile.png) |
+| Terminal flow | ![Terminal flow](assets/terminal-marketplace.svg) |
+| Terminal usability | ![Terminal usability](assets/terminal-usability.png) |
+| Embed architecture | ![Embed surfaces](assets/embed-surfaces.svg) |
+| Studio video | [Studio walkthrough](assets/marketplace-demo.webm) |
+| Terminal video | [CLI usability walkthrough](assets/terminal-demo.webm) |
+| Terminal transcript | [CLI transcript](proofs/terminal-logs/cli-usability-transcript.txt) |
 
----
+## Product Surfaces
 
-## 🌐 Microservice System Topology
+| Surface | Primary guide |
+| --- | --- |
+| CLI | [`agent-integration.md`](agent-integration.md) and [`integration-profiles.md`](integration-profiles.md) |
+| SDK | [`universal-integration.md`](universal-integration.md) |
+| React package | [`universal-integration.md`](universal-integration.md) and [`customization.md`](customization.md) |
+| Web Component | [`universal-integration.md`](universal-integration.md) |
+| Daemon and local safety | [`security-privacy.md`](security-privacy.md) |
+| Runtime controls | [`runtime-residency-modes.md`](runtime-residency-modes.md) |
+| Windows desktop packaging | [`windows-installer.md`](windows-installer.md) |
+| Funding/resume proof material | [`funding-proof-dossier.md`](funding-proof-dossier.md) |
 
 ```mermaid
 flowchart LR
-  user["User or host app"] --> cli["htlm CLI"]
-  user --> react["React component"]
-  user --> wc["Web Component"]
-  user --> studio["HT Studio"]
-  cli --> daemon["Local daemon"]
-  react --> daemon
-  wc --> daemon
-  studio --> daemon
-  daemon --> inventory["SQLite WAL database"]
-  daemon --> runtimes["Ollama / LM Studio / llama.cpp"]
-  daemon --> hf["Hugging Face GGUF registry"]
+  App[Host app] --> React[React package]
+  App --> WebComponent[Web Component]
+  Agent[Terminal or coding agent] --> CLI[htlm CLI]
+  CLI --> Daemon[Loopback daemon]
+  React --> Daemon
+  WebComponent --> Daemon
+  Studio[Studio app] --> Daemon
+  Daemon --> Inventory[(SQLite inventory)]
+  Daemon --> Models[Local model storage]
+  Daemon --> Runtimes[Ollama, LM Studio, llama.cpp, OpenAI-compatible runtimes]
 ```
 
----
+## Main Guides
 
-## 📖 Complete Documentation Registry
+- [`universal-integration.md`](universal-integration.md): universal target matrix and embed setup.
+- [`integration-profiles.md`](integration-profiles.md): runtime-only, embed-ui, studio-full, terminal-agent, and dev profiles.
+- [`agent-integration.md`](agent-integration.md): OpenAI/Ollama-compatible local agent setup.
+- [`customization.md`](customization.md): config objects, Web Component attributes, labels, and tokens.
+- [`runtime-residency-modes.md`](runtime-residency-modes.md): balanced, fast-parallel, and quality-single resource models.
+- [`security-privacy.md`](security-privacy.md): loopback defenses, origin checks, and privileged-action headers.
+- [`open-source.md`](open-source.md): release bundles, repository metadata, and publishing checks.
+- [`replacement-readiness.md`](replacement-readiness.md): current runtime foundation and remaining readiness gates.
+- [`llm-runtime-architecture-audit-2026-06-01.md`](llm-runtime-architecture-audit-2026-06-01.md): runtime adapter direction.
+- [`llama-cpp-llama-server-audit-2026-05-31.md`](llama-cpp-llama-server-audit-2026-05-31.md): llama.cpp and llama-server integration audit.
+- [`ht-studio-beyond-ollama-lm-studio-analysis.md`](ht-studio-beyond-ollama-lm-studio-analysis.md): strategic runtime comparison.
 
-### Developer Integration Guides
-* [`universal-integration.md`](universal-integration.md): safelisting, targets, and universal target matrix.
-* [`integration-profiles.md`](integration-profiles.md): runtime-only, embed-ui, studio-full, terminal-agent, and dev profiles.
-* [`agent-integration.md`](agent-integration.md): connecting standard OpenAI/Ollama compatible clients to the background daemon.
-* [`customization.md`](customization.md): React configuration objects, Web Component attributes, and token adjustments.
-
-### Architectural Audits & Deep-Dives
-* [`runtime-residency-modes.md`](runtime-residency-modes.md): balanced, fast-parallel, and quality-single resource models.
-* [`security-privacy.md`](security-privacy.md): five-ring loopback defenses, origin checkers, and dual-header validations.
-* [`llm-runtime-architecture-audit-2026-06-01.md`](llm-runtime-architecture-audit-2026-06-01.md): local-first runtime adapters and index merging.
-* [`llama-cpp-llama-server-audit-2026-05-31.md`](llama-cpp-llama-server-audit-2026-05-31.md): embedded server residency pool audits.
-* [`ht-studio-beyond-ollama-lm-studio-analysis.md`](ht-studio-beyond-ollama-lm-studio-analysis.md): strategic analysis of the path beyond Ollama/LM Studio.
-
-### Release & Distribution Procedures
-* [`open-source.md`](open-source.md): building localized release bundles and managing public Git repository topics.
-* [`windows-installer.md`](windows-installer.md): packaging runtime installers on Windows hosts.
-* [`launch-gap-completion-plan-2026-06-01.md`](launch-gap-completion-plan-2026-06-01.md): release preflights and checklist updates.
-
----
-
-## 🛠️ Verification & Pipeline Smokes
-
-Run validation gates locally before packing or publishing:
+## Verification Commands
 
 ```powershell
-# Run compiler checks
 npm run check
-
-# Execute unit and mock integration test suites
 npm test
-
-# Run Playwright browser UI smoke tests
+npm run build
+npm run smoke:docs
 npm run smoke:marketplace
 npm run smoke:studio
-
-# Run compatibility and API conformance checks
 npm run check:compatibility
-
-# Run complete clean-room preflight validation
 npm run release:check
 ```
+
+`npm run release:check` is the primary local gate before pushing public-facing repo changes.

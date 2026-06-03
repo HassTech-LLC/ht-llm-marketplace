@@ -16,9 +16,7 @@ This audit looked at HT Studio's current `node-llama-cpp` / `llama-server` integ
 | `MLX` | `ml-explore/mlx` `7df341c09052` / 2026-06-01 | Apple Silicon unified memory, Metal backend, lazy evaluation |
 | `mlx-lm` | `ml-explore/mlx-lm` `df1d3f3c9a7a` / 2026-05-04 | Apple local LLM serving/generation, prompt cache files, KV quantization, draft-model speculative decoding |
 
-The full audit sources are checked out at:
-
-`C:\Users\Owner\Documents\Codex\tools\llm-runtime-audit`
+The full audit sources were checked out into a local temporary/reference workspace during the audit and are intentionally not vendored into this repository.
 
 On Windows, the TensorRT-LLM checkout required `git config --global core.longpaths true`; the repo contains paths that exceed the default Windows filename limit.
 

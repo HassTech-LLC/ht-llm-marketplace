@@ -1,22 +1,10 @@
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-<!-- SPECKIT END -->
+# Agent Notes
 
+This repo is a public local-first LLM marketplace and runtime control plane. Keep agent edits focused on source, documentation, release gates, and public proof assets.
 
-<claude-mem-context>
-# Memory Context
+Before shipping changes:
 
-# claude-mem status
-
-This project has no memory yet. The current session will seed it; subsequent sessions will receive auto-injected context for relevant past work.
-
-Memory injection starts on your second session in a project.
-
-`/learn-codebase` is available if the user wants to front-load the entire repo into memory in a single pass (~5 minutes on a typical repo, optional). Otherwise memory builds passively as work happens.
-
-Live activity: http://localhost:37777
-How it works: `/how-it-works`
-
-This message disappears once the first observation lands.
-</claude-mem-context>
+- Run `npm run release:check` for the full local release gate.
+- Keep generated output out of git: `artifacts/`, `scratch/`, local model files, databases, desktop build output, Playwright captures, and runtime logs.
+- Do not commit local memory files such as `PROJECT_MEMORY.md`.
+- Keep public claims evidence-bound. Model weights, runtime caches, and user downloads are local payloads, not part of the source footprint.

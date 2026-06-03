@@ -3,6 +3,7 @@ dist/
 coverage/
 .vite/
 artifacts/
+scratch/
 .env
 .env.*
 !.env.example
