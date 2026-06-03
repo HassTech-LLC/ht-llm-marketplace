@@ -1,0 +1,5 @@
+# Enable the GitHub Sponsor button on the repository landing page.
+# Supported platforms: github, patreon, open_collective, ko_fi, tidelift, custom
+
+github: [HassTech-LLC] # Add GitHub Sponsors username(s) here
+custom: ["https://buymeacoffee.com/hasstech"] # Add custom donation/sponsorship links here (e.g., Buy Me a Coffee)
