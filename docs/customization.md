@@ -8,6 +8,8 @@ See `examples/react-embed` for a minimal React embed and `examples/enterprise-wh
 
 For a project-specific starting point:
 
+Run this after installing the CLI from the local release bundle or published package.
+
 ```powershell
 npx htlm init --target react
 ```
@@ -65,6 +67,8 @@ Existing props still work:
 See `examples/minimal-widget` for the smallest embed and `examples/plain-html` for a styled host page.
 
 For any non-React project, start with:
+
+Run this after installing the CLI from the local release bundle or published package.
 
 ```powershell
 npx htlm init --target html

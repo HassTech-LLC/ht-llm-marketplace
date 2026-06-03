@@ -24,10 +24,11 @@ Do not describe downloaded models, local runtime caches, `node_modules`, `.git`,
 Install packages when you want to embed the marketplace in an existing app:
 
 ```powershell
-npm install @ht-llm-marketplace/cli
-npm install @ht-llm-marketplace/react
-npm install @ht-llm-marketplace/web-component
+npm run bundle:local
+# In the consuming project, run the generated install-local script from that bundle.
 ```
+
+After npm publication, the install path becomes `npm install @ht-llm-marketplace/cli @ht-llm-marketplace/react @ht-llm-marketplace/web-component`.
 
 Fork the repo when you need to modify daemon runtime adapters, catalog source behavior, installer flows, or release packaging.
 
@@ -58,7 +59,7 @@ Build that widget before relying on the daemon-hosted script:
 npm run build -w @ht-llm-marketplace/web-component
 ```
 
-After npm publish, consumers can start the daemon with:
+After installing the local release bundle or the published CLI package, consumers can start the daemon with:
 
 ```powershell
 npx htlm start
@@ -73,6 +74,8 @@ npx htlm-daemon
 ## Terminal And Project Integration Contract
 
 The marketplace must work without the Studio UI. The supported terminal lifecycle is:
+
+These commands require the HT CLI package to be installed in the consuming project.
 
 ```powershell
 npx htlm status

@@ -8,7 +8,7 @@ const { artifacts } = await client.inventory();
 const runnable = artifacts.find((artifact) => artifact.runnable && artifact.runtime === "llamacpp");
 
 if (!runnable) {
-  console.log("No runnable llama.cpp artifact found. Use `npx htlm search` and `npx htlm pull` first.");
+  console.log("No runnable llama.cpp artifact found. After installing the HT CLI package, use `npx htlm search` and `npx htlm pull` first.");
   process.exit(0);
 }
 

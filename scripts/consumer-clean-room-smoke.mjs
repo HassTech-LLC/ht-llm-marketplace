@@ -46,6 +46,10 @@ try {
   const daemonEntry = path.join(consumerRoot, "node_modules", "@ht-llm-marketplace", "daemon", "dist", "index.js");
   assertFile(cli);
   assertFile(daemonEntry);
+  runNpmAndAssert(["exec", "--", "htlm", "targets"], consumerRoot, ["Agents / CI / terminals", "Plain HTML / Astro / CMS"]);
+  runNpmAndAssert(["exec", "--", "htlm", "profile", "terminal-agent"], consumerRoot, ["Terminal and agent profile", "OPENAI_BASE_URL"]);
+  const importSmoke = writePackageImportSmoke(consumerRoot);
+  runAndAssert(process.execPath, [importSmoke], consumerRoot, ["consumer package import smoke ok"]);
 
   const port = await freePort();
   const daemon = spawn(process.execPath, [daemonEntry], {
@@ -70,6 +74,7 @@ try {
   try {
     const apiUrl = `http://127.0.0.1:${port}`;
     await waitForHealth(apiUrl, daemon, () => daemonOutput);
+    await assertOpenAiModels(apiUrl);
     runAndAssert(process.execPath, [cli, "targets"], consumerRoot, ["Agents / CI / terminals", "Plain HTML / Astro / CMS"]);
     runAndAssert(process.execPath, [cli, "init", "--target", "auto"], consumerRoot, ["Project target: html", "ht-model-marketplace"], {
       HT_MARKETPLACE_API_URL: apiUrl
@@ -108,12 +113,17 @@ function run(command, args, cwd, options = {}) {
   }
 }
 
-function runAndAssert(command, args, cwd, markers, env = {}) {
+function runNpmAndAssert(args, cwd, markers, env = {}) {
+  runAndAssert(npm.command, [...npm.args, ...args], cwd, markers, env, { shell: npm.shell });
+}
+
+function runAndAssert(command, args, cwd, markers, env = {}, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
     env: { ...cleanNpmPassthroughEnv(), ...env },
     encoding: "utf8",
-    windowsHide: true
+    windowsHide: true,
+    shell: options.shell ?? false
   });
   if (result.status !== 0) {
     throw new Error(`${args.join(" ")} failed\nstdout=${result.stdout}\nstderr=${result.stderr}`);
@@ -125,11 +135,40 @@ function runAndAssert(command, args, cwd, markers, env = {}) {
   }
 }
 
+function writePackageImportSmoke(cwd) {
+  const file = path.join(cwd, "package-import-smoke.mjs");
+  fs.writeFileSync(
+    file,
+    [
+      'import { MarketplaceClient } from "@ht-llm-marketplace/sdk";',
+      'import { ModelMarketplace, resolveMarketplaceConfig } from "@ht-llm-marketplace/react";',
+      'if (typeof MarketplaceClient !== "function") throw new Error("SDK MarketplaceClient import failed");',
+      'if (typeof ModelMarketplace !== "function") throw new Error("React ModelMarketplace import failed");',
+      'if (resolveMarketplaceConfig({ branding: { name: "Smoke" } }).branding.name !== "Smoke") throw new Error("React config import failed");',
+      "globalThis.HTMLElement = class {};",
+      "globalThis.customElements = { registry: new Map(), get(name) { return this.registry.get(name); }, define(name, ctor) { this.registry.set(name, ctor); } };",
+      'await import("@ht-llm-marketplace/web-component");',
+      'if (!globalThis.customElements.get("ht-model-marketplace")) throw new Error("Web Component import failed");',
+      'console.log("consumer package import smoke ok");',
+      ""
+    ].join("\n")
+  );
+  return file;
+}
+
 async function assertWidget(apiUrl) {
   const response = await fetch(`${apiUrl}/widget/ht-model-marketplace.js`);
   const body = await response.text();
   if (!response.ok || !body.includes("ht-model-marketplace")) {
     throw new Error(`Widget asset failed in clean-room consumer: ${response.status} ${body.slice(0, 200)}`);
+  }
+}
+
+async function assertOpenAiModels(apiUrl) {
+  const response = await fetch(`${apiUrl}/v1/models`);
+  const payload = await response.json();
+  if (!response.ok || payload.object !== "list" || !Array.isArray(payload.data)) {
+    throw new Error(`OpenAI models endpoint failed in clean-room consumer: ${response.status} ${JSON.stringify(payload).slice(0, 200)}`);
   }
 }
 

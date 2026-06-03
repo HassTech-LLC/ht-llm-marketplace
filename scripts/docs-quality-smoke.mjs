@@ -37,7 +37,8 @@ const readmeMarkers = [
   "## Verification",
   "## Documentation",
   "```mermaid",
-  "npx htlm targets",
+  "node packages/cli/src/index.js targets",
+  "Avoid bare `npx htlm` before installing this CLI package",
   "npm run bundle:local",
   "OPENAI_BASE_URL=http://127.0.0.1:3001/v1"
 ];
@@ -84,6 +85,18 @@ const markdownFiles = [
 
 for (const relative of markdownFiles) {
   checkLinks(relative);
+  checkQuickstartPreconditions(relative);
+}
+
+const npxPreconditionFiles = unique([
+  ...markdownFiles,
+  "examples/agent-configs/hermes-agent.openai-compatible.json",
+  "examples/agent-configs/openai-compatible.env.example",
+  "examples/agent-configs/sdk-lifecycle.mjs",
+  "scripts/local-release-bundle.mjs"
+]);
+for (const relative of npxPreconditionFiles) {
+  assertNpxHtlmHasInstallPrecondition(relative, read(relative));
 }
 
 console.log("docs quality smoke ok");
@@ -148,4 +161,81 @@ function checkLinks(relative) {
       throw new Error(`${relative} has broken link: ${target}`);
     }
   }
+}
+
+function checkQuickstartPreconditions(relative) {
+  const contents = read(relative);
+  const sections = contents.split(/\n#+\s+/);
+  for (const section of sections) {
+    const lines = section.split("\n");
+    const heading = lines[0] || "";
+    const lowerHeading = heading.toLowerCase();
+    const isSetupOrQuickstart =
+      lowerHeading.includes("quick start") ||
+      lowerHeading.includes("quickstart") ||
+      lowerHeading.includes("start here") ||
+      lowerHeading.includes("setup") ||
+      lowerHeading.includes("install");
+    if (isSetupOrQuickstart) {
+      const sectionText = lines.slice(1).join("\n");
+      const hasNpxCommand =
+        sectionText.includes("npx htlm") ||
+        sectionText.includes("npx ollm") ||
+        sectionText.includes("npx ht-llm-marketplace");
+      if (hasNpxCommand) {
+        const hasPrecondition =
+          sectionText.includes("npm install") ||
+          sectionText.includes("npm run bundle:local") ||
+          sectionText.includes("npm i ") ||
+          sectionText.includes("install the local release") ||
+          sectionText.includes("install the cli") ||
+          sectionText.includes("installed from the local release") ||
+          sectionText.includes("install first") ||
+          sectionText.includes("assume the CLI package was installed");
+        if (!hasPrecondition) {
+          throw new Error(
+            `Documentation Safety Violation in ${relative} -> Section "${heading}": ` +
+            `Found bare npx command execution without an explicit installation precondition/context in this section. ` +
+            `Please state the installation requirements before invoking "npx htlm" or "npx ollm" to prevent npm package conflicts.`
+          );
+        }
+      }
+    }
+  }
+}
+
+function assertNpxHtlmHasInstallPrecondition(relative, contents) {
+  const lower = contents.toLowerCase();
+  let index = lower.indexOf("npx htlm");
+  while (index >= 0) {
+    const context = lower.slice(Math.max(0, index - 900), Math.min(lower.length, index + 350));
+    const allowed = [
+      "after installing",
+      "after install",
+      "after the cli package is installed",
+      "cli package was installed",
+      "commands that use `npx htlm` assume",
+      "install the local release bundle first",
+      "install-local",
+      "installer adds",
+      "expected to resolve after",
+      "npm install @ht-llm-marketplace/cli",
+      "published `@ht-llm-marketplace/cli` package",
+      "published @ht-llm-marketplace/cli package",
+      "after installing the ht cli package",
+      "after installing the cli",
+      "installed from the local release bundle",
+      "run this after installing the cli"
+    ].some((marker) => context.includes(marker));
+    if (!allowed) {
+      const line = contents.slice(0, index).split(/\r?\n/).length;
+      const excerpt = contents.slice(index, Math.min(contents.length, index + 120)).replace(/\s+/g, " ");
+      throw new Error(`${relative}:${line} uses npx htlm without a nearby install precondition: ${excerpt}`);
+    }
+    index = lower.indexOf("npx htlm", index + "npx htlm".length);
+  }
+}
+
+function unique(items) {
+  return [...new Set(items)];
 }

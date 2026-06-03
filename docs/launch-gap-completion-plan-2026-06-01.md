@@ -115,8 +115,7 @@ Goal: prove a real consuming project can use the marketplace from scratch.
 Tasks:
 
 - Create a temporary consumer folder outside the repo.
-- Install either published packages or the generated local bundle.
-- Run:
+- Install either published packages or the generated local bundle. After installing the CLI, run:
 
 ```powershell
 npx htlm init --target auto

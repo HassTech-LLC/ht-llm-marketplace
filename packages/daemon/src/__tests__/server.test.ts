@@ -270,6 +270,31 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     return ctx;
   }
 
+  function delegatedRuntimeConfig(overrides: Record<string, any> = {}) {
+    return {
+      keepWarm: true,
+      unloadAfterIdleMs: 900000,
+      contextSize: 4096,
+      gpuLayers: "auto",
+      threads: "auto",
+      backend: "delegated-server",
+      residencyMode: "balanced",
+      draftModel: null,
+      delegatedServer: { enabled: true, port: 8080, parallel: 4, continuousBatching: true },
+      hotPool: { enabled: true, maxModels: 2, maxModelBytes: 2_000_000_000, autoWarm: true },
+      ...overrides
+    };
+  }
+
+  function runningLlamaServer(endpoint = "http://127.0.0.1:8080") {
+    return {
+      available: true,
+      running: true,
+      endpoint,
+      message: "running"
+    };
+  }
+
   it("GET /api/version returns the daemon's own package.json version", async () => {
     const mockContext = createMockContext();
     const server = createServer(mockContext);
@@ -503,6 +528,28 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(JSON.parse(res.body).error.type).toBe("not_implemented");
   });
 
+  it("POST /v1/embeddings does not auto-start delegated generation backends for fallback responses", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+    mockContext.llamaServer.status = vi.fn().mockReturnValue({
+      available: true,
+      running: false,
+      endpoint: "",
+      message: "stopped"
+    });
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/embeddings", { input: "hello", model: "phi-3" });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(501);
+    expect(JSON.parse(res.body).error.code).toBe("local_embeddings_unavailable");
+    expect(mockContext.llamaServerPool.warm).not.toHaveBeenCalled();
+    expect(mockContext.llamaServer.start).not.toHaveBeenCalled();
+  });
+
   it("POST /v1/embeddings returns embeddings when a local provider is enabled", async () => {
     const mockContext = createMockContext();
     mockContext.embeddings = Promise.resolve({
@@ -618,6 +665,160 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     expect(mockContext.engine.chat).not.toHaveBeenCalled();
   });
 
+  it("POST /v1/chat/completions uses a running single delegated server before warming the pool", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+    mockContext.llamaServer.status = vi.fn().mockReturnValue(runningLlamaServer());
+    mockContext.llamaServerPool.warm = vi.fn().mockRejectedValue(new Error("pool should not warm"));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "delegated hi" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/v1/chat/completions", {
+        model: "phi-3",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.llamaServer.configure).toHaveBeenCalled();
+      expect(mockContext.llamaServerPool.warm).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(JSON.parse(res.body).choices[0].message.content).toBe("delegated hi");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("POST /v1/chat/completions sends traffic to a running pooled endpoint before the single server", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+    mockContext.llamaServerPool.endpointForModel = vi.fn().mockReturnValue("http://127.0.0.1:8181");
+    mockContext.llamaServerPool.warm = vi.fn().mockRejectedValue(new Error("pool should already be ready"));
+    mockContext.llamaServer.status = vi.fn().mockReturnValue(runningLlamaServer());
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "pooled hi" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/v1/chat/completions", {
+        model: "phi-3",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.llamaServer.configure).not.toHaveBeenCalled();
+      expect(mockContext.llamaServerPool.warm).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8181/v1/chat/completions",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(JSON.parse(res.body).choices[0].message.content).toBe("pooled hi");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("POST /v1/chat/completions warms the delegated pool and uses the ready endpoint", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+    mockContext.llamaServer.status = vi.fn().mockReturnValue({ available: false, running: false, message: "no single server" });
+    mockContext.llamaServerPool.endpointForModel = vi
+      .fn()
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue("http://127.0.0.1:8182");
+    mockContext.llamaServerPool.warm = vi.fn().mockResolvedValue({
+      enabled: true,
+      basePort: 8182,
+      entries: [{ model: "phi-3", endpoint: "http://127.0.0.1:8182", port: 8182, state: "running" }]
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "warm pool" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/v1/chat/completions", {
+        model: "phi-3",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockContext.llamaServerPool.warm).toHaveBeenCalled();
+      expect(mockContext.llamaServer.start).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8182/v1/chat/completions",
+        expect.objectContaining({ method: "POST" })
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("POST /v1/chat/completions returns 503 when the delegated pool never becomes healthy", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+    mockContext.llamaServer.status = vi.fn().mockReturnValue({ available: false, running: false, message: "no single server" });
+    mockContext.llamaServerPool.endpointForModel = vi.fn().mockReturnValue(undefined);
+    mockContext.llamaServerPool.warm = vi.fn().mockResolvedValue({
+      enabled: true,
+      basePort: 8183,
+      entries: [{ model: "phi-3", endpoint: "http://127.0.0.1:8183", port: 8183, state: "starting" }]
+    });
+    mockContext.llamaServerPool.status = vi.fn().mockReturnValue({
+      enabled: true,
+      basePort: 8183,
+      entries: [{ model: "phi-3", endpoint: "http://127.0.0.1:8183", port: 8183, state: "stopped" }]
+    });
+
+    const server = createServer(mockContext);
+    const handler = (server as any)._events.request;
+    const req = createMockRequest("POST", "/v1/chat/completions", {
+      model: "phi-3",
+      messages: [{ role: "user", content: "hello" }],
+      stream: false
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.body).error.message).toContain("pool is still starting");
+    expect(mockContext.llamaServer.start).not.toHaveBeenCalled();
+  });
+
   it("POST /api/chat rejects unknown explicit llama.cpp models instead of silently using the loaded model", async () => {
     const mockContext = createMockContext();
     mockContext.engine.loadedModel = "phi-3";
@@ -662,6 +863,47 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
     const parsed = JSON.parse(res.body);
     expect(parsed.response).toBe("Mock response");
     expect(parsed.done).toBe(true);
+  });
+
+  it("POST /api/generate delegates prompt generation to llama-server when configured", async () => {
+    const mockContext = createMockContext();
+    mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+    mockContext.llamaServer.status = vi.fn().mockReturnValue(runningLlamaServer());
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "generated delegated" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+      const req = createMockRequest("POST", "/api/generate", {
+        model: "phi-3",
+        prompt: "Hello there",
+        stream: false,
+        options: { num_predict: 4, temperature: 0.2 }
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        expect.objectContaining({ method: "POST" })
+      );
+      const upstreamBody = JSON.parse((fetchMock.mock.calls[0]?.[1] as any).body);
+      expect(upstreamBody.messages).toEqual([{ role: "user", content: "Hello there" }]);
+      expect(upstreamBody.max_tokens).toBe(4);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.response).toBe("generated delegated");
+      expect(parsed.done).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("POST /api/chat auto-routes local GGUF model requests to in-process engine", async () => {
@@ -763,6 +1005,7 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       await handler(req, res);
 
       expect(res.statusCode).toBe(200);
+      expect(mockContext.llamaServerPool.warm).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledWith(
         "http://127.0.0.1:8080/v1/chat/completions",
         expect.objectContaining({ method: "POST" })
@@ -1108,6 +1351,230 @@ describe("Ollama & LM Studio Replacement Compatibility Server Routing", () => {
       expect(res.statusCode).toBe(422);
       const parsed = JSON.parse(res.body);
       expect(parsed.error).toContain("Model architecture 'gemma4' needs llama.cpp");
+    });
+
+    it("POST /v1/chat/completions stream proxies SSE and preserves content type", async () => {
+      const mockContext = createMockContext();
+      mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+        backend: "delegated-server",
+        delegatedServer: { enabled: true, port: 8080 }
+      });
+      mockContext.llamaServer.status = vi.fn().mockReturnValue({
+        available: true,
+        running: true,
+        endpoint: "http://127.0.0.1:8080"
+      });
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const server = createServer(mockContext);
+        const handler = (server as any)._events.request;
+        const req = createMockRequest("POST", "/v1/chat/completions", {
+          model: "phi-3",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true
+        });
+        const res = createMockResponse();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers["content-type"]).toBe("text/event-stream");
+        expect(res.body).toContain('"content":"hello"');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("POST /v1/completions delegates through chat completions", async () => {
+      const mockContext = createMockContext();
+      mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+        backend: "delegated-server",
+        delegatedServer: { enabled: true, port: 8080 }
+      });
+      mockContext.llamaServer.status = vi.fn().mockReturnValue({
+        available: true,
+        running: true,
+        endpoint: "http://127.0.0.1:8080"
+      });
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: "delegated completions text" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const server = createServer(mockContext);
+        const handler = (server as any)._events.request;
+        const req = createMockRequest("POST", "/v1/completions", {
+          model: "phi-3",
+          prompt: "test legacy completion",
+          stream: false
+        });
+        const res = createMockResponse();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8080/v1/chat/completions",
+          expect.objectContaining({ method: "POST" })
+        );
+        const parsed = JSON.parse(res.body);
+        expect(parsed.choices[0].text).toBe("delegated completions text");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("POST /v1/responses delegates responses when delegated backend is active", async () => {
+      const mockContext = createMockContext();
+      mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+        backend: "delegated-server",
+        delegatedServer: { enabled: true, port: 8080 }
+      });
+      mockContext.llamaServer.status = vi.fn().mockReturnValue({
+        available: true,
+        running: true,
+        endpoint: "http://127.0.0.1:8080"
+      });
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: "delegated responses" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const server = createServer(mockContext);
+        const handler = (server as any)._events.request;
+        const req = createMockRequest("POST", "/v1/responses", {
+          model: "phi-3",
+          input: "test responses",
+          stream: false
+        });
+        const res = createMockResponse();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8080/v1/chat/completions",
+          expect.objectContaining({ method: "POST" })
+        );
+        expect(JSON.parse(res.body).output_text).toBe("delegated responses");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("POST /v1/responses streams delegated OpenAI deltas as Responses API events", async () => {
+      const mockContext = createMockContext();
+      mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue(delegatedRuntimeConfig());
+      mockContext.llamaServer.status = vi.fn().mockReturnValue(runningLlamaServer());
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response('data: {"choices":[{"delta":{"content":"rs"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const server = createServer(mockContext);
+        const handler = (server as any)._events.request;
+        const req = createMockRequest("POST", "/v1/responses", {
+          model: "phi-3",
+          input: "test streaming responses",
+          stream: true,
+          max_output_tokens: 4
+        });
+        const res = createMockResponse();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8080/v1/chat/completions",
+          expect.objectContaining({ method: "POST" })
+        );
+        expect(res.body).toContain("event: response.output_text.delta");
+        expect(res.body).toContain('"delta":"rs"');
+        expect(res.body).toContain("data: [DONE]");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("POST /v1/embeddings proxies when delegated endpoint exists", async () => {
+      const mockContext = createMockContext();
+      mockContext.store.getRuntimeConfig = vi.fn().mockReturnValue({
+        backend: "delegated-server",
+        delegatedServer: { enabled: true, port: 8080 }
+      });
+      mockContext.llamaServer.status = vi.fn().mockReturnValue({
+        available: true,
+        running: true,
+        endpoint: "http://127.0.0.1:8080"
+      });
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const server = createServer(mockContext);
+        const handler = (server as any)._events.request;
+        const req = createMockRequest("POST", "/v1/embeddings", { input: "hello", model: "phi-3" });
+        const res = createMockResponse();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8080/v1/embeddings",
+          expect.objectContaining({ method: "POST" })
+        );
+        expect(JSON.parse(res.body).data[0].embedding).toEqual([0.1, 0.2]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("POST /api/engine/server/start|stop and pool/warm|stop require privileged guard", async () => {
+      const mockContext = createMockContext();
+      const server = createServer(mockContext);
+      const handler = (server as any)._events.request;
+
+      // Start action (without headers -> should be rejected with 403)
+      const reqStart = createMockRequest("POST", "/api/engine/server/start");
+      const resStart = createMockResponse();
+      await handler(reqStart, resStart);
+      expect(resStart.statusCode).toBe(403);
+
+      // Stop action (without headers -> 403)
+      const reqStop = createMockRequest("POST", "/api/engine/server/stop");
+      const resStop = createMockResponse();
+      await handler(reqStop, resStop);
+      expect(resStop.statusCode).toBe(403);
+
+      // Warm action (without headers -> 403)
+      const reqWarm = createMockRequest("POST", "/api/engine/server/pool/warm");
+      const resWarm = createMockResponse();
+      await handler(reqWarm, resWarm);
+      expect(resWarm.statusCode).toBe(403);
     });
   });
 });

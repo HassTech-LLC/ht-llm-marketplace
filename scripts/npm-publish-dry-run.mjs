@@ -5,19 +5,44 @@ import { spawnSync } from "node:child_process";
 const root = process.cwd();
 const npm = npmInvocation();
 const packages = [
-  "@ht-llm-marketplace/sdk",
-  "@ht-llm-marketplace/react",
-  "@ht-llm-marketplace/web-component",
-  "@ht-llm-marketplace/daemon",
-  "@ht-llm-marketplace/cli"
+  { workspace: "@ht-llm-marketplace/sdk", requiredFiles: ["dist/index.js", "dist/index.d.ts"] },
+  { workspace: "@ht-llm-marketplace/react", requiredFiles: ["dist/index.js", "dist/model-marketplace.js", "dist/styles.css"] },
+  { workspace: "@ht-llm-marketplace/web-component", requiredFiles: ["dist/ht-model-marketplace.js"] },
+  { workspace: "@ht-llm-marketplace/daemon", requiredFiles: ["dist/index.js", "dist/server.js"] },
+  { workspace: "@ht-llm-marketplace/cli", requiredFiles: ["dist/index.js"] }
 ];
 
-for (const workspace of packages) {
+for (const { workspace, requiredFiles } of packages) {
+  verifyPackContents(workspace, requiredFiles);
   console.log(`\n== npm publish dry-run ${workspace} ==`);
   runNpm(["publish", "--dry-run", "--access", "public", "-w", workspace]);
 }
 
 console.log("\nnpm publish dry-run ok");
+
+function verifyPackContents(workspace, requiredFiles) {
+  const result = spawnSync(npm.command, [...npm.args, "pack", "--dry-run", "--json", "-w", workspace], {
+    cwd: root,
+    encoding: "utf8",
+    shell: npm.shell,
+    env: cleanNpmPassthroughEnv()
+  });
+  if (result.status !== 0) {
+    throw new Error(`npm pack --dry-run --json -w ${workspace} failed with ${result.status}\n${result.stdout}\n${result.stderr}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`Unable to parse npm pack JSON for ${workspace}: ${error.message}\n${result.stdout}\n${result.stderr}`);
+  }
+  const files = new Set(parsed?.[0]?.files?.map((file) => file.path) || []);
+  for (const file of requiredFiles) {
+    if (!files.has(file)) {
+      throw new Error(`${workspace} pack dry-run is missing required file: ${file}`);
+    }
+  }
+}
 
 function runNpm(args) {
   const result = spawnSync(npm.command, [...npm.args, ...args], {
@@ -38,6 +63,13 @@ function cleanNpmPassthroughEnv() {
 }
 
 function npmInvocation() {
+  if (process.platform === "win32") {
+    const pathEntries = (process.env.Path || process.env.PATH || "").split(path.delimiter).filter(Boolean);
+    for (const entry of pathEntries) {
+      const shim = path.join(entry, "npm.CMD");
+      if (fs.existsSync(shim)) return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm"], shell: false };
+    }
+  }
   if (process.env.npm_execpath && fs.existsSync(process.env.npm_execpath)) {
     return { command: process.execPath, args: [process.env.npm_execpath], shell: false };
   }

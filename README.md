@@ -46,13 +46,17 @@ HT Local LLM Marketplace is built as a set of reusable surfaces rather than one 
 
 ## Terminal Marketplace
 
+From this source checkout, call the CLI entrypoint directly so the commands resolve to this repo:
+
 ```powershell
-npx htlm status
-npx htlm targets
-npx htlm init --target agent --api-url http://127.0.0.1:3001
-npx htlm pull Qwen/Qwen2.5-0.5B-Instruct-GGUF
-npx htlm run qwen2.5:0.5b "Explain local-first AI in one sentence."
+node packages/cli/src/index.js status
+node packages/cli/src/index.js targets
+node packages/cli/src/index.js init --target agent --api-url http://127.0.0.1:3001
+node packages/cli/src/index.js pull Qwen/Qwen2.5-0.5B-Instruct-GGUF
+node packages/cli/src/index.js run qwen2.5:0.5b "Explain local-first AI in one sentence."
 ```
+
+After installing the local release bundle from `npm run bundle:local` or a published `@ht-llm-marketplace/cli` package, those same commands are available as `npx htlm ...`. Avoid bare `npx htlm` before installing this CLI package; npm already has an unrelated `htlm` package.
 
 Agent and OpenAI-compatible clients can point at the local daemon:
 

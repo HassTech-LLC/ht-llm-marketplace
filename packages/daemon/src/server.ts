@@ -1040,7 +1040,7 @@ function ollamaRunningModels(context: RuntimeContext) {
   return { models: [...loaded.values()] };
 }
 
-async function configureLlamaServer(context: RuntimeContext) {
+export async function configureLlamaServer(context: RuntimeContext) {
   const config = context.store.getRuntimeConfig();
   const decision = standardRouteDecision(context, await context.modelIndex.models());
   const selectedModel = decision.selected && !decision.selected.path.startsWith("virtual:") ? decision.selected.path : undefined;
@@ -1054,7 +1054,7 @@ async function configureLlamaServer(context: RuntimeContext) {
   });
 }
 
-async function delegatedBackend(
+export async function delegatedBackend(
   context: RuntimeContext,
   options: { autoStart?: boolean; model?: string } = {}
 ): Promise<{ endpoint: string } | { status: number; message: string } | undefined> {
@@ -1062,6 +1062,11 @@ async function delegatedBackend(
   if (config.backend !== "delegated-server" && !config.delegatedServer.enabled) return undefined;
   const pooledEndpoint = context.llamaServerPool.endpointForModel(options.model);
   if (pooledEndpoint) return { endpoint: pooledEndpoint };
+
+  await configureLlamaServer(context);
+  let status = context.llamaServer.status();
+  if (status.running && status.endpoint) return { endpoint: status.endpoint };
+
   if (config.delegatedServer.enabled && options.autoStart !== false) {
     const pool = await warmLlamaServerPool(context);
     const endpoint = context.llamaServerPool.endpointForModel(options.model) || pool.entries.find((entry) => entry.state === "running")?.endpoint;
@@ -1075,8 +1080,6 @@ async function delegatedBackend(
       };
     }
   }
-  await configureLlamaServer(context);
-  let status = context.llamaServer.status();
   if (!status.running && options.autoStart !== false && status.available) {
     status = await context.llamaServer.start();
     if (status.running && status.endpoint) {
@@ -1107,7 +1110,7 @@ async function delegatedBackend(
   };
 }
 
-async function waitForPoolEndpoint(context: RuntimeContext, model: string | undefined, timeoutMs: number) {
+export async function waitForPoolEndpoint(context: RuntimeContext, model: string | undefined, timeoutMs: number) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const endpoint = context.llamaServerPool.endpointForModel(model);
@@ -1119,7 +1122,7 @@ async function waitForPoolEndpoint(context: RuntimeContext, model: string | unde
   return undefined;
 }
 
-async function waitForDelegatedHealth(endpoint: string, timeoutMs: number) {
+export async function waitForDelegatedHealth(endpoint: string, timeoutMs: number) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     try {

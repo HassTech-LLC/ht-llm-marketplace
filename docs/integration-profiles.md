@@ -14,6 +14,8 @@ HT Local LLM Marketplace stays in one monorepo, but it is designed as several in
 
 CLI profile help:
 
+Commands that use `npx htlm` assume the CLI package was installed from the local release bundle or the published `@ht-llm-marketplace/cli` package.
+
 ```powershell
 npx htlm profile
 npx htlm profile runtime-only
@@ -35,6 +37,8 @@ npm run profile:agent
 ## Runtime-Only
 
 This is the lightest fully functional model engine path.
+
+Install the local release bundle first, or use the published packages when they are available.
 
 ```powershell
 npm install @ht-llm-marketplace/cli @ht-llm-marketplace/sdk
@@ -103,7 +107,7 @@ set OPENAI_BASE_URL=http://127.0.0.1:3001/v1
 set OPENAI_API_KEY=local-not-needed
 ```
 
-Lifecycle:
+Lifecycle after installing the CLI from the local release bundle or published package:
 
 ```powershell
 npx htlm lifecycle

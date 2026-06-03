@@ -4,26 +4,30 @@ HT Local LLM Marketplace is designed to enter a project through the smallest use
 
 ## Any Project Quickstart
 
+From this source checkout:
+
 ```powershell
-npx htlm init --target auto
-npx htlm start
-npx htlm status
+node packages/cli/src/index.js init --target auto
+node packages/cli/src/index.js start
+node packages/cli/src/index.js status
 ```
+
+In a consuming project, install the local release bundle first. After the CLI package is installed, the same commands are available as `npx htlm ...`.
 
 `init --target auto` inspects the current folder and prints a matching integration snippet. Use an explicit target when the host type is known:
 
 ```powershell
-npx htlm init --target react
-npx htlm init --target html
-npx htlm init --target python
-npx htlm init --target django
-npx htlm init --target rails
-npx htlm init --target laravel
-npx htlm init --target aspnet
-npx htlm init --target electron
-npx htlm init --target tauri
-npx htlm init --target vscode
-npx htlm init --target terminal
+node packages/cli/src/index.js init --target react
+node packages/cli/src/index.js init --target html
+node packages/cli/src/index.js init --target python
+node packages/cli/src/index.js init --target django
+node packages/cli/src/index.js init --target rails
+node packages/cli/src/index.js init --target laravel
+node packages/cli/src/index.js init --target aspnet
+node packages/cli/src/index.js init --target electron
+node packages/cli/src/index.js init --target tauri
+node packages/cli/src/index.js init --target vscode
+node packages/cli/src/index.js init --target terminal
 ```
 
 ## Framework Matrix

@@ -416,7 +416,7 @@ function byteLimitTransform(maxBytes: number) {
   });
 }
 
-function isPathInside(root: string, candidate: string) {
+export function isPathInside(root: string, candidate: string) {
   const resolvedRoot = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
   const resolvedCandidate = fs.existsSync(candidate) ? fs.realpathSync(candidate) : path.resolve(candidate);
   const relative = path.relative(resolvedRoot, resolvedCandidate);

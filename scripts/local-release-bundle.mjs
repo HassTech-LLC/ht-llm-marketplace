@@ -61,8 +61,8 @@ function powershellInstaller(tarballs) {
     "$ErrorActionPreference = 'Stop'",
     "Write-Host 'Installing HT Local LLM Marketplace local tarballs...'",
     `npm install ${installArgs}`,
-    "Write-Host 'Start the daemon with: npx htlm start'",
-    "Write-Host 'Terminal profile: npx htlm profile terminal-agent'",
+    "Write-Host 'After install, start the daemon with: npx htlm start'",
+    "Write-Host 'After install, print the terminal profile with: npx htlm profile terminal-agent'",
     ""
   ].join("\n");
 }
@@ -74,8 +74,8 @@ function shellInstaller(tarballs) {
     "set -eu",
     "echo 'Installing HT Local LLM Marketplace local tarballs...'",
     `npm install ${installArgs}`,
-    "echo 'Start the daemon with: npx htlm start'",
-    "echo 'Terminal profile: npx htlm profile terminal-agent'",
+    "echo 'After install, start the daemon with: npx htlm start'",
+    "echo 'After install, print the terminal profile with: npx htlm profile terminal-agent'",
     ""
   ].join("\n");
 }
@@ -93,6 +93,8 @@ function readme(tarballs) {
     "npx htlm init --target auto",
     "npx htlm start",
     "```",
+    "",
+    "`npx htlm` is expected to resolve after the installer adds the local CLI tarball to the consuming project.",
     "",
     "OpenAI-compatible endpoint:",
     "",

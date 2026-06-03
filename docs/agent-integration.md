@@ -7,15 +7,17 @@ HT Local LLM Marketplace can act as a local model marketplace, a model runner, o
 Start the daemon:
 
 ```powershell
-npx htlm start
+node packages/cli/src/index.js start
 ```
+
+In a consuming project, install the local release bundle first, then replace `node packages/cli/src/index.js` with `npx htlm`.
 
 Configure the client or agent:
 
 ```text
 base_url: http://127.0.0.1:3001/v1
 api_key: local-not-needed
-model: use `htlm list` or `GET /v1/models`
+model: use `node packages/cli/src/index.js list` from source, `htlm list` after installing the CLI, or `GET /v1/models`
 ```
 
 Supported local routes include:
@@ -32,15 +34,15 @@ Supported local routes include:
 Agents should not blindly download or delete models. Use the lifecycle gates:
 
 ```powershell
-npx htlm search "small coding model"
-npx htlm files <hf-repo>
-npx htlm pull <ollama-ref-or-hf-repo>
-npx htlm downloads
-npx htlm inventory
-npx htlm verify <artifact-id>
-npx htlm load <artifact-id>
-npx htlm run <model> "quick smoke prompt"
-npx htlm rm <artifact-id>
+node packages/cli/src/index.js search "small coding model"
+node packages/cli/src/index.js files <hf-repo>
+node packages/cli/src/index.js pull <ollama-ref-or-hf-repo>
+node packages/cli/src/index.js downloads
+node packages/cli/src/index.js inventory
+node packages/cli/src/index.js verify <artifact-id>
+node packages/cli/src/index.js load <artifact-id>
+node packages/cli/src/index.js run <model> "quick smoke prompt"
+node packages/cli/src/index.js rm <artifact-id>
 ```
 
 ## App Families
@@ -71,9 +73,9 @@ Use this shape when the agent accepts OpenAI-compatible settings:
 If the agent supports shell hooks, use:
 
 ```powershell
-npx htlm status
-npx htlm list
-npx htlm load <artifact-id>
+node packages/cli/src/index.js status
+node packages/cli/src/index.js list
+node packages/cli/src/index.js load <artifact-id>
 ```
 
 ## SDK Control Plane
