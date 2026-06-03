@@ -1,4 +1,6 @@
-# HT Local LLM Marketplace
+# 💎 HT Local LLM Marketplace
+
+A high-fidelity, embeddable local LLM supply chain and runtime control plane. Fully optimized for zero-config integration in React, vanilla HTML, terminal agents, and enterprise desktop platforms.
 
 [![CI](https://github.com/HassTech-LLC/ht-llm-marketplace/actions/workflows/ci.yml/badge.svg)](https://github.com/HassTech-LLC/ht-llm-marketplace/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -7,172 +9,68 @@
 [![Embeddable](https://img.shields.io/badge/ui-React%20%2B%20Web%20Component-0ea5e9.svg)](docs/universal-integration.md)
 [![OpenAI compatible](https://img.shields.io/badge/API-OpenAI--compatible-111827.svg)](docs/agent-integration.md)
 
-HT Local LLM Marketplace is a lightweight local model supply chain: a marketplace UI, terminal lifecycle, and local runtime control plane that other apps can embed without becoming a full AI studio.
+---
 
-It ships as a small TypeScript control plane and lets the user's machine own the heavy parts: model files, runtime state, downloads, verification, and delete plans stay local.
+## ⚡ Why This Exists
 
-## What It Gives Developers
+Most local-LLM tools are heavy desktop apps or system runtimes. **HT Local LLM Marketplace** is designed as a lightweight model supply chain that can be embedded into other products without bringing a heavy AI studio wrapper.
 
-- A terminal marketplace for agents, CI, operators, and power users.
-- A local daemon with OpenAI-compatible and Ollama-compatible endpoints.
-- A typed SDK for host apps.
-- A React marketplace component.
-- A framework-neutral Web Component.
-- A full Studio for users who want peak runtime controls, hot pools, and managed `llama-server`.
+It lets the user's machine own the resource-intensive tasks: model files, runtime state, download queues, hash verification, and deletion safety plans stay strictly local.
 
-The practical goal: let any project discover, download, verify, load, run, and safely delete local model artifacts while keeping model state and runtime control on the user's machine.
+---
 
-## Why This Exists
+## 🎨 Visual Proof & Demonstration
 
-Most local-LLM tools are either full desktop apps or backend runtimes. HT Local LLM Marketplace is designed as a reusable model supply chain that can be embedded into other products.
+### Frosted-Glassmorphic Studio Interface
+The Studio features Outfit typography, animated mesh background glows, frosted-glass product cards, VRAM telemetry dashboards, and glow-hover interactions.
 
-It is intentionally split into surfaces:
+![HassTech Local LLM Marketplace Studio Cockpit](docs/assets/marketplace-desktop.png)
 
-| Need | Use |
-| --- | --- |
-| Add a model marketplace to an existing React app | `@ht-llm-marketplace/react` |
-| Add a marketplace to plain HTML, Rails, Django, Laravel, ASP.NET, CMS, or static pages | `<ht-model-marketplace>` Web Component |
-| Give an agent or terminal user lifecycle control | `htlm` CLI |
-| Call a local model from any OpenAI-compatible client | `http://127.0.0.1:3001/v1` |
-| Build a custom product around model installs and runtime state | `@ht-llm-marketplace/sdk` |
-| Run the full local Studio with peak controls | `npm run studio` |
+### Embeddable Microservice Architecture
+The local daemon maps Microservice boundaries dynamically, sliding ports from `3001` upward and maintaining loopback sandbox restrictions.
 
-## Size And Footprint
+![Microservice Architecture Map](docs/assets/embed-surfaces.svg)
 
-The repo is meant to be small as source and package code, not to pretend local models are small. GGUF files, Ollama blobs, and desktop build outputs are intentionally outside the publishable control-plane footprint.
+### Responsive Mobile Interface
+Sleek, fluid, and optimized for mobile/tablet command controls.
 
-| Layer | Current measured size | What it means |
-| --- | ---: | --- |
-| Tracked source | 229 files, 1.42 MiB | The GitHub repo stays compact and reviewable. |
-| `@ht-llm-marketplace/cli` tarball | ~8.9 KB | Terminal lifecycle wrapper. |
-| `@ht-llm-marketplace/sdk` tarball | ~10.5 KB | Typed API client and shared types. |
-| `@ht-llm-marketplace/react` tarball | ~44 KB | Embeddable React marketplace UI and CSS. |
-| `@ht-llm-marketplace/web-component` tarball | ~83.5 KB | Framework-neutral custom element bundle. |
-| `@ht-llm-marketplace/daemon` tarball | ~128.6 KB | Local daemon, adapters, download jobs, runtime routing, delete safety. |
+![HassTech Local LLM Marketplace Mobile view](docs/assets/marketplace-mobile.png)
 
-Large local folders such as `node_modules`, `.git`, Tauri `target`, desktop installers, downloaded models, and runtime caches are development or user-machine artifacts, not what a consuming app imports.
+### Video Demonstrations
+* 🎥 **[Studio Walkthrough Video (docs/assets/marketplace-demo.webm)](docs/assets/marketplace-demo.webm)**: Frosted-glass tabs, rescan mechanics, and telemetry dashboard in action.
+* 🎥 **[CLI Usability Video (docs/assets/terminal-demo.webm)](docs/assets/terminal-demo.webm)**: Direct terminal GGUF downloads and interactive run executions.
 
-## System Map
+---
 
-| System | Tech | Comes with |
-| --- | --- | --- |
-| Local daemon | Node, TypeScript, loopback HTTP | `/health`, catalog search, downloads, inventory, runtime scan, safe delete plans, OpenAI-compatible routes. |
-| Runtime adapters | Ollama, LM Studio, llama.cpp, OpenAI-compatible endpoints | Detect installed runtimes, pull/download models, start optional connectors, configure external compatible endpoints. |
-| Managed engine path | llama.cpp / `node-llama-cpp`, managed `llama-server` support | Built-in local GGUF path, hot pools, residency modes, delegated server pool hooks. |
-| Terminal marketplace | `htlm` CLI | `status`, `targets`, `init`, `search`, `files`, `pull`, `downloads`, `inventory`, `verify`, `load`, `run`, `rm`. |
-| SDK | TypeScript ESM | Typed lifecycle calls for host apps and automation. |
-| React UI | React 18/19-compatible package | Full marketplace component with configurable branding, theme, feature flags, and download modes. |
-| Web Component | Vite-built custom element | Plain HTML/server-rendered embed for Django, Rails, Laravel, ASP.NET, CMS, Astro, Vue, Svelte, Electron, and Tauri hosts. |
-| Studio | Vite app | Full user surface for marketplace, library, runtimes, compatibility scan, and peak local controls. |
-| Desktop shell | Tauri scaffold | Windows desktop packaging path without committing heavy build output. |
-| Release proof | Vitest, TypeScript, Playwright, package and consumer smokes | Build, browser, terminal, universal-template, package, clean-room, Docker, and installer gates. |
+## 🌟 Key Developer Benefits
 
-## Possible Product Shapes
+> [!NOTE]
+> **Embed Everywhere**: Add a local model marketplace to your existing React panel in 5 lines, or embed the Web Component in plain HTML, Django, Rails, Laravel, or Astro hosts.
 
-| Product using this repo | Smallest useful profile |
-| --- | --- |
-| Terminal-only local model manager | `@ht-llm-marketplace/cli` |
-| Hermes-style or coding agent backend | CLI plus `http://127.0.0.1:3001/v1` |
-| React SaaS/admin marketplace panel | `@ht-llm-marketplace/react` plus daemon |
-| Plain HTML or server-rendered app marketplace | Web Component plus daemon |
-| Python/FastAPI/Django local-AI app | Web Component plus OpenAI-compatible API |
-| IDE or VS Code extension | OpenAI-compatible API plus CLI lifecycle |
-| Desktop local AI app | React/Web Component plus daemon, or full Studio |
-| Power-user local Studio | Full repo or future desktop bundle |
+### 🔒 1. Five Rings of Loopback Security
+* **DNS Rebinding Guard**: `isLoopbackHost` asserts host header checks to reject external DNS hijacking attempts.
+* **CORS Preflight Protection**: High-risk state operations require custom confirmation headers (`x-ht-marketplace-confirm: privileged-action`) which force browser CORS preflight checks.
+* **Origin Filtering**: Explicit browser-origin validation for incoming calls.
+* **Path Traversal Shield**: Resolves absolute file paths relative to configured directories, blocking `../../` system deletions.
+* **Byte Limit Stream Transformer**: Restricts downloaded package streams to prevent decompression bombs.
 
-## GitHub Topics
+### ⚡ 2. Performance & Concurrency Tuning
+* **Native SQLite WAL Mode**: Utilizes Node's native synchronous SQLite module with Write-Ahead Logging for parallel non-blocking reads.
+* **SSE Progress Coalescing**: Throttles Server-Sent Events progress logs to a smooth `250ms` rendering interval.
+* **Dynamic Port-Sliding**: Automatically detects port collisions and slides (from `3001` up to `3010`), writing status to `active-daemon.json` for client auto-discovery.
+* **Bilingual Language Drift Prevention**: Pre-injects English language safety prompts to block Qwen2.5/multilingual models from drifting into non-English responses.
 
-Suggested repository topics: `local-ai`, `llm`, `gguf`, `ollama`, `llama-cpp`, `openai-compatible`, `model-marketplace`, `web-component`, `react`, `typescript`, `local-first`, `ai-agents`, `desktop-ai`.
+### 🔄 3. Ollama Architectural Fallback
+If loading a GGUF model with a model architecture unsupported by the built-in llama.cpp engine (e.g. `gemma4`), and Ollama is online, the daemon dynamically fallback-registers the model inside Ollama on-the-fly via a dynamic `Modelfile` and proxies execution transparently.
 
-## Quick Start
+### 🛠️ 4. Native AVX-512 Compiler Bypass
+Native llama.cpp compiling on Windows targets `-march=x86-64-v3`. This bypasses upstream LLVM Clang AVX-512 compiler bugs, preserving full Vulkan GPU and CPU acceleration (AVX2, FMA, BMI1/2) without crash regressions.
 
-From this repo:
+---
 
-```powershell
-npm install
-npm run studio
-```
+## 💻 Reusable Code Snippets
 
-The daemon defaults to:
-
-```text
-http://127.0.0.1:3001
-```
-
-Run the release gate:
-
-```powershell
-npm run release:check
-```
-
-## Use It In Another Project
-
-The npm packages are prepared for publication but are not published yet. Until then, build a local install bundle:
-
-```powershell
-npm run bundle:local
-```
-
-That creates tarballs and install scripts outside the repo under the OS temp directory. In a consuming project, use the generated `install-local.ps1` or install the tarballs directly.
-
-After package publication, the normal flow will be:
-
-```powershell
-npm install @ht-llm-marketplace/cli
-npx htlm init --target auto
-npx htlm start
-```
-
-`init --target auto` inspects the current folder and prints the right snippet. You can also choose a target explicitly:
-
-```powershell
-npx htlm init --target react
-npx htlm init --target html
-npx htlm init --target python
-npx htlm init --target django
-npx htlm init --target rails
-npx htlm init --target laravel
-npx htlm init --target aspnet
-npx htlm init --target electron
-npx htlm init --target tauri
-npx htlm init --target vscode
-npx htlm init --target terminal
-```
-
-See the supported host matrix:
-
-```powershell
-npx htlm targets
-```
-
-## Terminal Marketplace
-
-The CLI is a first-class product surface, not a helper script.
-
-```powershell
-npx htlm status
-npx htlm search "qwen coder"
-npx htlm files Qwen/Qwen2.5-0.5B-Instruct-GGUF
-npx htlm pull qwen2.5:0.5b
-npx htlm downloads
-npx htlm inventory
-npx htlm verify <artifact-id>
-npx htlm load <artifact-id>
-npx htlm run <model> "hi"
-npx htlm rm <artifact-id>
-```
-
-Agents and local-LLM apps can point at the daemon as an OpenAI-compatible backend:
-
-```text
-OPENAI_BASE_URL=http://127.0.0.1:3001/v1
-OPENAI_API_KEY=local-not-needed
-```
-
-## Embed Examples
-
-React:
-
+### React Embedding (`@ht-llm-marketplace/react`)
 ```tsx
 import { ModelMarketplace, type MarketplaceConfig } from "@ht-llm-marketplace/react";
 import "@ht-llm-marketplace/react/styles.css";
@@ -182,11 +80,10 @@ const config: MarketplaceConfig = {
   theme: "system",
   branding: {
     name: "Acme Model Hub",
-    tagline: "Approved local models",
+    tagline: "Secure, local-first LLM marketplace",
     mark: "AM"
   },
-  defaultQuery: "qwen coder",
-  storageKey: "acme_model_hub"
+  defaultQuery: "qwen coder"
 };
 
 export function LocalModels() {
@@ -194,23 +91,20 @@ export function LocalModels() {
 }
 ```
 
-Web Component:
-
+### HTML Web Component (Framework-Neutral Element)
 ```html
 <script type="module" src="http://127.0.0.1:3001/widget/ht-model-marketplace.js"></script>
+
 <ht-model-marketplace
   api-url="http://127.0.0.1:3001"
   theme="system"
   brand-name="Acme Model Hub"
   brand-tagline="Approved local models"
-  brand-mark="AM"
   accent-color="#0ea5e9"
-  default-query="qwen coder"
 ></ht-model-marketplace>
 ```
 
-Python:
-
+### Python API Integration
 ```python
 import json
 import urllib.request
@@ -224,138 +118,53 @@ request = urllib.request.Request(
 print(urllib.request.urlopen(request).read().decode("utf-8"))
 ```
 
-More examples live in [`examples/universal`](examples/universal).
+---
 
-## Visual Proof
+## 🛠️ Package Distribution Matrix
 
-Marketplace desktop:
+| Workspace | Size | Purpose |
+| --- | ---: | --- |
+| [`@ht-llm-marketplace/cli`](packages/cli) | ~8.9 KB | Terminal marketplace command runner. |
+| [`@ht-llm-marketplace/sdk`](packages/sdk) | ~10.5 KB | Typed client wrappers and environment interfaces. |
+| [`@ht-llm-marketplace/react`](packages/react) | ~44 KB | High-fidelity React components. |
+| [`@ht-llm-marketplace/web-component`](packages/web-component) | ~83.5 KB | Framework-neutral custom elements. |
+| [`@ht-llm-marketplace/daemon`](packages/daemon) | ~128.6 KB | Local control plane database, adapters, and routing. |
+| [`apps/studio`](apps/studio) | Source | Standalone control panel application. |
 
-![Marketplace desktop screenshot](docs/assets/marketplace-desktop.png)
+---
 
-Marketplace mobile:
+## 🚀 Quick Start & Development
 
-![Marketplace mobile screenshot](docs/assets/marketplace-mobile.png)
+1. **Start Development Servers**:
+   ```powershell
+   npm install
+   npm run studio
+   ```
+   * Vite dev server: `http://127.0.0.1:3000`
+   * Local daemon server: `http://127.0.0.1:3001`
 
-Video walkthrough:
+2. **Verify Release Gate**:
+   ```powershell
+   # Runs compilation, unit tests, compatibility, E2E browser smoke, and size checks
+   npm run release:check
+   ```
 
-[`docs/assets/marketplace-demo.webm`](docs/assets/marketplace-demo.webm)
+3. **Build Local Tarball Bundles**:
+   ```powershell
+   npm run bundle:local
+   ```
+   This generates ready-to-test tarballs and an `install-local.ps1` script inside your OS temp directory.
 
-Terminal video:
+---
 
-[`docs/assets/terminal-demo.webm`](docs/assets/terminal-demo.webm)
+## 📚 Document Index
 
-Terminal marketplace:
-
-![Terminal marketplace flow](docs/assets/terminal-marketplace.svg)
-
-Terminal screenshot:
-
-![Terminal proof screenshot](docs/assets/terminal-usability.png)
-
-Terminal transcript:
-
-[`docs/proofs/terminal-logs/cli-usability-transcript.txt`](docs/proofs/terminal-logs/cli-usability-transcript.txt)
-
-Embeddable surfaces:
-
-![Marketplace embed surfaces](docs/assets/embed-surfaces.svg)
-
-## Architecture
-
-```mermaid
-flowchart LR
-  user["User or host app"] --> cli["htlm CLI"]
-  user --> react["React component"]
-  user --> wc["Web Component"]
-  user --> studio["HT Studio"]
-  cli --> daemon["Local daemon"]
-  react --> daemon
-  wc --> daemon
-  studio --> daemon
-  daemon --> inventory["SQLite inventory, jobs, audit"]
-  daemon --> runtimes["Ollama, LM Studio, llama.cpp, OpenAI-compatible runtimes"]
-  daemon --> hf["Hugging Face GGUF catalog"]
-  daemon --> local["Local model files"]
-```
-
-Runtime residency:
-
-```mermaid
-flowchart TD
-  request["Chat or model request"] --> route["Standard routing"]
-  route --> residency["Residency planner"]
-  residency --> hot["Hot model pool"]
-  residency --> serverPool["Managed llama-server pool"]
-  residency --> fallback["Embedded llama.cpp fallback"]
-  hot --> response["Low-latency response"]
-  serverPool --> response
-  fallback --> response
-```
-
-## Packages
-
-| Package | Purpose |
-| --- | --- |
-| `@ht-llm-marketplace/cli` | Terminal marketplace, project initialization, daemon start. |
-| `@ht-llm-marketplace/daemon` | Local HTTP daemon, scanner, downloads, runtime routing, safe delete plans. |
-| `@ht-llm-marketplace/sdk` | Typed client and shared public types. |
-| `@ht-llm-marketplace/react` | Reusable marketplace UI. |
-| `@ht-llm-marketplace/web-component` | Framework-neutral custom element. |
-| `apps/studio` | Full local Studio shell. |
-
-## Trust And Safety Boundaries
-
-The daemon is local-first by default:
-
-- Runtime scans are local.
-- Inventory, downloads, verification, and delete plans are local.
-- Delete operations require marketplace ownership evidence.
-- Privileged daemon actions require explicit confirmation headers.
-- Browser access is constrained to configured loopback origins.
-- Model source metadata, inferred recommendations, and verified local evidence are kept separate.
-
-Security details live in [`docs/security-privacy.md`](docs/security-privacy.md).
-
-## Verification
-
-Current release verification includes:
-
-```powershell
-npm run check
-npm test
-npm run build
-npm run check:compatibility
-npm run smoke:cli-marketplace
-npm run smoke:universal
-npm run smoke:marketplace
-npm run pack:dry-run
-npm run smoke:packages
-npm run check:artifacts
-```
-
-Use the single command:
-
-```powershell
-npm run release:check
-```
-
-## Documentation
-
-Start with [`docs/index.md`](docs/index.md).
-
-Key guides:
-
-- [`docs/universal-integration.md`](docs/universal-integration.md): add the marketplace to any project type.
-- [`docs/integration-profiles.md`](docs/integration-profiles.md): runtime-only, embed UI, Studio full, terminal-agent, and dev profiles.
-- [`docs/agent-integration.md`](docs/agent-integration.md): Hermes-style agents, coding agents, local chat UIs, and OpenAI-compatible clients.
-- [`docs/customization.md`](docs/customization.md): branding, tokens, features, React config, and Web Component attributes.
-- [`docs/open-source.md`](docs/open-source.md): public packaging, local bundle, and contribution workflow.
-- [`docs/runtime-residency-modes.md`](docs/runtime-residency-modes.md): balanced, fast-parallel, and quality-single runtime behavior.
-- [`docs/security-privacy.md`](docs/security-privacy.md): local-first privacy and safety boundaries.
-- [`RELEASE.md`](RELEASE.md): release checklist.
-
-## Contributing
-
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), and [`SECURITY.md`](SECURITY.md) before opening public changes.
-
-Keep marketplace work honest: if a feature changes the UI, it should have browser proof; if it changes terminal behavior, it should have CLI smoke coverage; if it changes an integration claim, it should be represented in the universal target matrix.
+Read the main guides inside the [`docs/`](docs/) directory:
+* [`docs/universal-integration.md`](docs/universal-integration.md): Target detection and embedding targets.
+* [`docs/integration-profiles.md`](docs/integration-profiles.md): Footprint profiles (runtime, CLI, React, full studio).
+* [`docs/agent-integration.md`](docs/agent-integration.md): Wiring local LLMs to coding/terminal agents.
+* [`docs/customization.md`](docs/customization.md): Changing brands, colors, styling tokens, and toggling features.
+* [`docs/runtime-residency-modes.md`](docs/runtime-residency-modes.md): Parallelism and performance resource allocations.
+* [`docs/security-privacy.md`](docs/security-privacy.md): Local sandbox security and verification guides.
+* [`docs/open-source.md`](docs/open-source.md): Publishing checklists and developer guidelines.
+* [`RELEASE.md`](RELEASE.md): Version release instructions.
