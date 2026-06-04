@@ -152,6 +152,7 @@ export class LlamaEngine {
   available = false;
   gpu: string | false = false;
   lastError?: string;
+  loadedContextSize?: number;
   private busy = false;
 
   private manager?: LlamaServerManager;
@@ -293,6 +294,7 @@ export class LlamaEngine {
     this.manager = manager;
     this.loadedPathValue = options.modelPath;
     this.loadedName = options.displayName || path.basename(options.modelPath);
+    this.loadedContextSize = options.contextSize || 2048;
     this.isVirtualSSM = false;
     this.lastMessagesLength = 0;
 
@@ -308,6 +310,7 @@ export class LlamaEngine {
     this.manager = undefined;
     this.loadedPathValue = undefined;
     this.loadedName = undefined;
+    this.loadedContextSize = undefined;
     this.isVirtualSSM = false;
     this.lastMessagesLength = 0;
     this.endpoint = undefined;

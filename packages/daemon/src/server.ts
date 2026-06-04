@@ -2197,20 +2197,33 @@ async function openAiChat(
 
   let useFallbackToOllama = false;
 
-  // If a specific model was named and isn't the loaded one, load it from local storage.
-  if (parsed.model && context.engine.loadedModel !== parsed.model) {
-    const target = resolveLocalModelByName(context, parsed.model);
+  let contextSize: number | undefined;
+  if (body && typeof body === "object") {
+    const rawBody = body as any;
+    if (typeof rawBody.contextSize === "number") {
+      contextSize = rawBody.contextSize;
+    } else if (rawBody.options && typeof rawBody.options === "object" && typeof rawBody.options.num_ctx === "number") {
+      contextSize = rawBody.options.num_ctx;
+    }
+  }
+
+  // If a specific model was named and isn't the loaded one, or if the requested context size is larger than the loaded one, load/reload it.
+  const isDifferentModel = parsed.model && context.engine.loadedModel !== parsed.model;
+  const isInsufficientContext = contextSize && context.engine.loadedContextSize && contextSize > context.engine.loadedContextSize;
+  if (isDifferentModel || isInsufficientContext) {
+    const targetModel = parsed.model || context.engine.loadedModel;
+    const target = resolveLocalModelByName(context, targetModel);
     if (target) {
       try {
-        await safeLoadEngineModel(context, { modelPath: target.path, displayName: target.displayName });
+        await safeLoadEngineModel(context, { modelPath: target.path, displayName: target.displayName, contextSize });
         if (context.engine.loadedPath?.startsWith("virtual:ollama:")) {
           useFallbackToOllama = true;
           parsed.model = context.engine.loadedPath.slice("virtual:ollama:".length);
         }
       } catch (error) {
-        return json(response, { error: { message: `Failed to load model '${parsed.model}': ${(error as Error).message}` } }, 500);
+        return json(response, { error: { message: `Failed to load model '${targetModel}': ${(error as Error).message}` } }, 500);
       }
-    } else if (!canUseLoadedModelAlias(context, parsed.model)) {
+    } else if (parsed.model && !canUseLoadedModelAlias(context, parsed.model)) {
       return json(response, { error: { message: `Model not found locally: ${parsed.model}`, type: "model_not_found" } }, 404);
     }
   }
