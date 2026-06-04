@@ -116,7 +116,7 @@ export class HotModelPool {
       .load({
         modelPath: model.path,
         displayName: model.name,
-        contextSize: Math.min(config.contextSize, 2048),
+        contextSize: config.contextSize,
         threads: config.threads === "auto" ? undefined : config.threads,
         gpuLayers: config.gpuLayers === "auto" ? undefined : config.gpuLayers,
         draftModelPath: config.draftModel || undefined
