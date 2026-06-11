@@ -1,20 +1,3 @@
-# Agent Notes
-
-This repo is a public local-first LLM marketplace and runtime control plane. Keep agent edits focused on source, documentation, release gates, and public proof assets.
-
-Before shipping changes:
-
-- Run `npm run release:check` for the full local release gate.
-- Keep generated output out of git: `artifacts/`, `scratch/`, local model files, databases, desktop build output, Playwright captures, and runtime logs.
-- Do not commit local memory files such as `PROJECT_MEMORY.md`.
-- Keep public claims evidence-bound. Model weights, runtime caches, and user downloads are local payloads, not part of the source footprint.
-
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-<!-- SPECKIT END -->
-
-
 <!-- HASS_GRAPHIFY_AGENT_START -->
 ## Hasstechapi Obsidian + Graphify Autouse
 
@@ -25,11 +8,24 @@ This project is registered in the HassTech Graphify control repo.
 - Master project: `hasstechapi`
 - Graphify control repo: `C:\Users\Owner\Desktop\graphify`
 
-Before meaningful Codex work in this project, load the project memory:
+Before meaningful Gemini work in this project, load the project memory:
 
 ```powershell
 rtk python C:\Users\Owner\.codex\skills\obsidian-vault\scripts\obsidian_vault.py ensure-project --cwd .
 rtk python C:\Users\Owner\.codex\skills\obsidian-vault\scripts\obsidian_vault.py project-context --cwd .
+```
+
+For Gemini CLI sessions, confirm this project context is actually loaded:
+
+```text
+/memory show
+```
+
+If this managed block or the project rules are missing, reload and pin the file:
+
+```text
+/memory reload
+@GEMINI.md
 ```
 
 
